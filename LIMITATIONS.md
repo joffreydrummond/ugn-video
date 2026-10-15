@@ -1,21 +1,45 @@
-# Checkpoint 1: remaining assessment work
+# Current limitations
 
-This starter has NOT been run in Docker in the generation environment (Docker unavailable). TypeScript checks are recorded separately. Do not claim runtime or device validation until performed locally.
+## Implemented, awaiting updated-stack verification
 
-Implemented starting path: cookie JWT login; direct multipart uploads; server ListParts resume; part-boundary pause/cancel; persisted video records; BullMQ asynchronous ffprobe / FFmpeg HLS worker; three renditions; poster; public playback API; native HLS / hls.js; per-device watch position.
+- Persistent MinIO object storage; PostgreSQL and Redis persistent volumes.
+- Seven-day idle upload cleanup, orphan multipart scanning, recoverable storage cleanup.
+- Reconciliation of completed-upload/database/queue gaps; exhausted stalled jobs become FAILED.
+- NestJS worker lifecycle, BullMQ lock/stall recovery, per-attempt DB fencing, lock-loss cancellation.
+- Batch selection with sequential transfer, per-file title/description, pause/resume and cancellation.
+- STOPPING/STOPPED processing lifecycle; restart and delete retain/remove originals as appropriate.
+- CPU/memory limits, scratch preflight, periodic disk monitor and dead-attempt cleanup.
 
-Required before assessment submission:
-- Validate Docker startup, MinIO CORS incl. ETag exposure and multipart resume in a real browser.
-- Add lifecycle cleanup for abandoned uploads, failed processing objects, and complete-before-enqueue crash recovery.
-- Add retry/delete endpoints and UI with object removal and concurrent worker cancellation handling.
-- Strong file identity verification for resume beyond filename/size/modification time.
-- Add optional custom thumbnail, description form, client zod/react-hook-form validation, Tailwind theme/fonts, Framer Motion, lucide and toast libraries.
-- Worker currently reports completed-rendition milestones, not true FFmpeg percentage; uses temporary disk without a disk quota/preflight check. Crash retries restart transcoding from zero. Add bounded streaming output uploads (currently individual output files are read into memory), startup failure recovery, valid master rendition resolution/bandwidth from actual outputs, no upscaling, media container allowlist.
-- Long media encoding and disk usage must be tested; adaptive switching/segment alignment validated.
-- Add manual quality selection and actual browser/native test matrix.
-- Frontend hardcodes localhost API. Configure public URLs for phone testing and deployment. Real S3 needs bucket policy/CORS/lifecycle configuration; compose MinIO is local demo only with public reads.
-- Worker is a plain BullMQ entry point; convert to NestJS worker application. Move shared DTOs/schemas into contracts and use them.
-- Add rate limiting/login hardening, friendly validation errors, logout.
-- Add meaningful integration/unit tests, architecture diagram and seven written answers, genuine milestone commits.
+The updated Docker/MinIO stack has not run in the preparation environment (Docker is unavailable). Earlier short-video, resume, retry scheduling, deletion and message-display tests were reported working by Joffrey on LocalStack. Do not treat those as verification of the new storage stack.
 
-Do not upload the confidential assessment PDF to a public repo.
+## Remaining assessment work
+
+- Public no-login catalog/page; manual quality selection; complete graceful playback states.
+- Optional custom thumbnail; shared client/server zod form validation and media-container allowlist. Description fields and basic length/size/extension checks are included.
+- Required frontend libraries/theme and meaningful shared contracts consumption.
+- Verify actual rendition bandwidth/resolution, no unnecessary upscaling, adaptive switching and segment alignment.
+- Host/API/storage URLs remain localhost by default; device access needs coordinated reachable origins/endpoints.
+- Test 10 GB+ upload/resume, 10-hour encoding/seeking, browser/device/native playback; document exact observed results.
+- Broader critical-path/live integration tests; ARCHITECTURE.md and ANSWERS.md W1-W7.
+
+## Intentional boundaries
+
+- Processing controls and the new queue have automated checks but still need live Docker/browser verification.
+- Queue metadata persists locally; browser file handles do not. Manage the queue in one admin tab. A transfer error pauses the queue rather than skipping a file.
+- Stop requires backend maintenance and a worker exit/lock release; a dead worker can delay acknowledgement until its old lock expires. Restart is disabled during STOPPING.
+- Finalizing an upload briefly disables upload cancellation; use Stop processing after completion.
+
+- Restarting an interrupted encode starts from the original. No encoding checkpoint/resume.
+- PostgreSQL and Redis are not one transaction. Stable job IDs and periodic reconciliation give recoverability, not exactly-once execution.
+- Cleanup requires a running backend and available dependencies. Outages defer cleanup. Storage's separate 90-day stale-multipart ceiling is a fallback, based on initiation time, not activity.
+- Seven-day idle expiration uses part-signing and ListParts activity; browser polling the catalog does not extend it. Paused uploads must be resumed within that window.
+- Disk monitoring is a two-second application guard, not an OS quota. It can overshoot between checks. Scratch and MinIO data share host capacity; budget for both.
+- Processing concurrency is one per worker. Do not scale workers until shared-disk budgets and distributed failure scenarios are tested.
+- Existing failed output objects remain available for retry/deletion and are removed when the session is deleted. Automatic purging of failed sessions is not implemented.
+- The legacy-to-MinIO helper copies completed objects up to 5 GiB each and size-verifies them. Larger existing originals require a multipart-capable migration tool. New browser uploads still use multipart and allow 20 GiB.
+- Existing unfinished multipart uploads cannot migrate between storage systems. Finish/cancel them before switching.
+- MinIO is local development infrastructure with public reads only for videos/*; originals remain private. Real S3 needs equivalent CORS/policy configuration. Do not use local demo credentials or HTTP cookie settings as production configuration.
+- Resume identity currently uses filename, size and modification time rather than a content fingerprint.
+- Rate limiting, account-backed admin credentials, production migrations, CDN/private playback and stronger operational controls remain production work.
+
+Do not commit videos, .env, signed URLs or the confidential assessment PDF.

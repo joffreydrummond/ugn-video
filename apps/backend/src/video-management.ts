@@ -15,7 +15,7 @@ function missing(error: any) {
 export async function retryVideo({ db, queue, s3, bucket }: Dependencies, id: string) {
   const video = await db.video.findUnique({ where: { id } });
   if (!video) throw new NotFoundException('Session not found.');
-  if (video.status !== 'FAILED') throw new ConflictException('Only failed sessions can be retried.');
+  if (!['FAILED', 'STOPPED'].includes(video.status)) throw new ConflictException('Only failed or stopped sessions can be restarted.');
   try {
     await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: `originals/${id}` }));
   } catch (error) {
@@ -28,7 +28,7 @@ export async function retryVideo({ db, queue, s3, bucket }: Dependencies, id: st
     throw new ConflictException('This session already has a queued or active job. Wait for it to finish.');
   }
   // A conditional state transition ensures only one request can claim the retry.
-  const claimed = await db.video.updateMany({ where: { id, status: 'FAILED' }, data: {
+  const claimed = await db.video.updateMany({ where: { id, status: video.status }, data: {
     status: 'UPLOADED', error: null, ...emptyProgress,
   } });
   if (!claimed.count) throw new ConflictException('Session changed. Refresh and try again.');
@@ -39,7 +39,7 @@ export async function retryVideo({ db, queue, s3, bucket }: Dependencies, id: st
     });
   } catch (error) {
     await db.video.updateMany({ where: { id, status: 'UPLOADED' }, data: {
-      status: 'FAILED', error: 'Could not queue processing. Please retry.',
+      status: video.status, error: 'Could not queue processing. Please retry.',
     } });
     throw error;
   }
@@ -49,7 +49,7 @@ export async function retryVideo({ db, queue, s3, bucket }: Dependencies, id: st
 export async function deleteVideo({ db, queue, s3, bucket }: Dependencies, id: string) {
   const video = await db.video.findUnique({ where: { id } });
   if (!video) return { ok: true }; // Repeating a completed deletion is harmless.
-  if (!['READY', 'FAILED', 'DELETING'].includes(video.status)) {
+  if (!['READY', 'FAILED', 'STOPPED', 'DELETING'].includes(video.status)) {
     throw new ConflictException('Wait for processing to finish. For unfinished uploads, use Cancel.');
   }
   if (video.status !== 'DELETING') {
@@ -79,15 +79,7 @@ export async function deleteVideo({ db, queue, s3, bucket }: Dependencies, id: s
         if (error?.name !== 'NoSuchUpload' && !missing(error)) throw error;
       }
     }
-    // Repeatedly remove the first page; this also covers prefixes with >1,000 files.
-    // A slash after the ID ensures another video's prefix can never match.
-    while (true) {
-      const page = await s3.send(new ListObjectsV2Command({ Bucket: bucket, Prefix: `videos/${id}/`, MaxKeys: 1000 }));
-      const objects = (page.Contents ?? []).flatMap(item => item.Key ? [{ Key: item.Key }] : []);
-      if (!objects.length) break;
-      const result = await s3.send(new DeleteObjectsCommand({ Bucket: bucket, Delete: { Objects: objects, Quiet: true } }));
-      if (result.Errors?.length) throw new Error('Storage could not delete some video files. Try Delete again.');
-    }
+    await removeOutputs(s3, bucket, id);
     await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: `originals/${id}` }));
     // Remove the record last so an interrupted cleanup can be retried.
     await db.video.deleteMany({ where: { id, status: 'DELETING' } });
@@ -98,4 +90,16 @@ export async function deleteVideo({ db, queue, s3, bucket }: Dependencies, id: s
     } });
     throw error;
   }
+}
+
+export async function removeOutputs(s3: S3Client, bucket: string, id: string) {
+    // Repeatedly remove the first page; this also covers prefixes with >1,000 files.
+    // A slash after the ID ensures another video's prefix can never match.
+    while (true) {
+      const page = await s3.send(new ListObjectsV2Command({ Bucket: bucket, Prefix: `videos/${id}/`, MaxKeys: 1000 }));
+      const objects = (page.Contents ?? []).flatMap(item => item.Key ? [{ Key: item.Key }] : []);
+      if (!objects.length) break;
+      const result = await s3.send(new DeleteObjectsCommand({ Bucket: bucket, Delete: { Objects: objects, Quiet: true } }));
+      if (result.Errors?.length) throw new Error('Storage could not delete some video files. Try Delete again.');
+    }
 }

@@ -11,6 +11,9 @@ import { timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import type { Request, Response } from 'express';
 import { retryVideo, deleteVideo } from './video-management';
+import { stopProcessing } from './processing-control';
+import { withVideoLock } from './video-lock';
+import { startRecovery, startStopMonitor, originalSize, jobOptions, missing } from './recovery';
 
 const db = new PrismaClient();
 const bucket = process.env.S3_BUCKET!;
@@ -42,6 +45,8 @@ const input = z.object({
 });
 @Controller()
 class Api {
+  @Get('health')
+  async health() { await db.$queryRaw`SELECT 1`; await queue.getJobCounts(); return { ok: true }; }
   @Get('auth/me')
   async me(@Req() req: Request) { await admin(req); return { authenticated: true }; }
 
@@ -64,10 +69,13 @@ class Api {
   @Get('admin/videos')
   async all(@Req() req: Request) { await admin(req); return db.video.findMany({ orderBy: { createdAt: 'desc' } }); }
 
+  @Post('admin/videos/:id/stop')
+  async stop(@Req() req: Request, @Param('id') id: string) { await admin(req); return withVideoLock(db, id, tx => stopProcessing({ ...management, db: tx }, id)); }
+
   @Post('admin/videos/:id/retry')
-  async retry(@Req() req: Request, @Param('id') id: string) { await admin(req); return retryVideo(management, id); }
+  async retry(@Req() req: Request, @Param('id') id: string) { await admin(req); return withVideoLock(db, id, tx => retryVideo({ ...management, db: tx }, id)); }
   @Post('admin/videos/:id/delete')
-  async remove(@Req() req: Request, @Param('id') id: string) { await admin(req); return deleteVideo(management, id); }
+  async remove(@Req() req: Request, @Param('id') id: string) { await admin(req); return withVideoLock(db, id, tx => deleteVideo({ ...management, db: tx }, id)); }
 
   @Get('videos/:id/playback')
   async playback(@Param('id') id: string) {
@@ -92,51 +100,97 @@ class Api {
   @Get('uploads/:id/parts')
   async parts(@Req() req: Request, @Param('id') id: string) {
     await admin(req);
+    return withVideoLock(db, id, async db => {
     const video = await db.video.findUniqueOrThrow({ where: { id } });
+    if (video.status !== 'UPLOADING' || !video.uploadId) throw new BadRequestException('Upload is no longer active. Refresh the session list.');
+    await db.video.update({ where: { id }, data: { updatedAt: new Date() } });
     let marker: string | undefined;
     const parts: any[] = [];
     do {
-      const result = await s3.send(new ListPartsCommand({ Bucket: bucket, Key: `originals/${id}`, UploadId: video.uploadId!, PartNumberMarker: marker }));
+      let result;
+      try { result = await s3.send(new ListPartsCommand({ Bucket: bucket, Key: `originals/${id}`, UploadId: video.uploadId!, PartNumberMarker: marker })); }
+      catch (error) {
+        if (missing(error)) {
+          // Completion may have succeeded despite a lost browser response.
+          // Leave that case for reconciliation rather than calling it a failure.
+          const size = await originalSize(management, id);
+          if (size === video.size) {
+            await db.video.update({ where: { id }, data: { status: 'UPLOADED', uploadId: null } });
+            await queue.add('process', { id }, jobOptions(id));
+          } else {
+            await db.video.update({ where: { id }, data: { status: 'FAILED', error: 'The unfinished upload is no longer available. Upload the file again.' } });
+          }
+          throw new BadRequestException('Upload is no longer active. Check Sessions below.');
+        }
+        throw error;
+      }
       parts.push(...(result.Parts ?? []));
       marker = result.IsTruncated ? result.NextPartNumberMarker : undefined;
     } while (marker);
     return parts;
+    });
   }
   @Post('uploads/:id/part')
   async part(@Req() req: Request, @Param('id') id: string, @Body() body: any) {
     await admin(req);
+    return withVideoLock(db, id, async db => {
     const number = z.number().int().min(1).max(10000).parse(body.part);
     const video = await db.video.findUniqueOrThrow({ where: { id } });
     if (video.status !== 'UPLOADING') throw new BadRequestException('Upload is not active');
+    await db.video.update({ where: { id }, data: { updatedAt: new Date() } });
     return { url: await getSignedUrl(browserS3, new UploadPartCommand({ Bucket: bucket, Key: `originals/${id}`, UploadId: video.uploadId!, PartNumber: number }), { expiresIn: 3600 }) };
+    });
   }
   @Post('uploads/:id/complete')
   async complete(@Req() req: Request, @Param('id') id: string, @Body() body: any) {
     await admin(req);
+    return withVideoLock(db, id, async db => {
     const video = await db.video.findUniqueOrThrow({ where: { id } });
     if (video.status === 'UPLOADING') {
       const parts = z.array(z.object({ PartNumber: z.number().int().positive(), ETag: z.string() })).min(1).parse(body.parts);
-      await s3.send(new CompleteMultipartUploadCommand({ Bucket: bucket, Key: `originals/${id}`, UploadId: video.uploadId!, MultipartUpload: { Parts: parts.sort((a, b) => a.PartNumber - b.PartNumber) } }));
-      const uploaded = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: `originals/${id}` }));
-      if (uploaded.ContentLength !== video.size) throw new BadRequestException('Size mismatch');
-      await db.video.update({ where: { id }, data: { status: 'UPLOADED' } });
+      const uploadedSize = await originalSize(management, id);
+      if (uploadedSize === null) {
+        try {
+          await s3.send(new CompleteMultipartUploadCommand({ Bucket: bucket, Key: `originals/${id}`, UploadId: video.uploadId!, MultipartUpload: { Parts: parts.sort((a, b) => a.PartNumber - b.PartNumber) } }));
+        } catch (error) {
+          if (await originalSize(management, id) === null) throw error;
+        }
+      }
+      const size = await originalSize(management, id);
+      if (size !== video.size) {
+        await db.video.update({ where: { id }, data: { status: 'FAILED', uploadId: null, error: 'Uploaded size does not match the selected file. Upload the file again.' } });
+        throw new BadRequestException('Size mismatch');
+      }
+      await db.video.update({ where: { id }, data: { status: 'UPLOADED', uploadId: null } });
     } else if (video.status !== 'UPLOADED') { return { ok: true, status: video.status }; }
-    await queue.add('process', { id }, { jobId: id, attempts: 3, backoff: { type: 'exponential', delay: 5000 } });
+    await queue.add('process', { id }, jobOptions(id));
     return { ok: true };
+    });
   }
   @Post('uploads/:id/cancel')
   async cancel(@Req() req: Request, @Param('id') id: string) {
     await admin(req);
-    const video = await db.video.findUniqueOrThrow({ where: { id } });
-    if (video.status !== 'UPLOADING') throw new BadRequestException('Upload is not active');
-    await s3.send(new AbortMultipartUploadCommand({ Bucket: bucket, Key: `originals/${id}`, UploadId: video.uploadId! }));
-    await db.video.delete({ where: { id } });
-    return { ok: true };
+    return withVideoLock(db, id, async db => {
+      const video = await db.video.findUnique({ where: { id } });
+      if (!video) return { ok: true };
+      if (video.status !== 'UPLOADING') throw new BadRequestException('Upload is not active');
+      // Commit cleanup intent first; a failed cleanup remains explicitly retryable.
+      await db.video.update({ where: { id }, data: { status: 'DELETING' } });
+      return deleteVideo({ ...management, db }, id);
+    });
   }
 }
 @Module({ controllers: [Api] })
 class App {}
 const app = await NestFactory.create(App);
 app.use(cookieParser());
-app.enableCors({ origin: 'http://localhost:5173', credentials: true });
+app.enableCors({ origin: process.env.FRONTEND_ORIGIN || 'http://localhost:5173', credentials: true });
 await app.listen(3000, '0.0.0.0');
+
+const idleDays = Number(process.env.UPLOAD_IDLE_DAYS || 7);
+if (!Number.isFinite(idleDays) || idleDays <= 0) throw new Error('UPLOAD_IDLE_DAYS must be positive');
+const stopRecovery = startRecovery(management, 60000, idleDays * 86400000);
+const stopMonitor = startStopMonitor(management);
+app.enableShutdownHooks();
+process.on('SIGTERM', () => { stopRecovery(); stopMonitor(); });
+process.on('SIGINT', () => { stopRecovery(); stopMonitor(); });

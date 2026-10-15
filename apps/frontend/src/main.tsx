@@ -2,34 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import Hls from 'hls.js';
 import './style.css';
-
-class ApiError extends Error {
-  constructor(message: string, public status: number) {
-    super(message);
-  }
-}
-
-async function api(path: string, body?: unknown) {
-  const response = await fetch(`http://localhost:3000/${path}`, {
-    credentials: 'include',
-    method: body === undefined ? 'GET' : 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-
-  const data = await response.json();
-
-  if (!response.ok) {
-    throw new ApiError(
-      typeof data.message === 'string'
-        ? data.message
-        : JSON.stringify(data.message || 'Request failed'),
-      response.status,
-    );
-  }
-
-  return data;
-}
+import { api, ApiError } from './api';
+import { BatchUploader } from './BatchUploader';
 
 function readableProcessingError(error: unknown) {
   const detail = String(error || '');
@@ -46,6 +20,8 @@ function processingNotice(video: any) {
     case 'FAILED': return name + ': ' + readableProcessingError(video.error);
     case 'RETRYING': return name + ' will retry automatically. Your original upload is saved.';
     case 'PROCESSING': return name + ' is processing. Follow its progress in Sessions below.';
+    case 'STOPPING': return name + ' is stopping. Waiting for the worker and partial-file cleanup.';
+    case 'STOPPED': return name + ' is stopped. The original is saved for restart or deletion.';
     case 'DELETING': return name + ' is being deleted.';
     default: return name + ': Upload received. Queued for processing.';
   }
@@ -215,8 +191,6 @@ function App() {
   const [email, setEmail] = useState('admin@ugn.local');
   const [password, setPassword] = useState('');
   const [videos, setVideos] = useState<any[]>([]);
-  const [file, setFile] = useState<File>();
-  const [title, setTitle] = useState('');
   const [message, setMessageText] = useState('');
   const [noticeVideo, setNoticeVideo] = useState<{ id: string; title: string; status: string } | null>(null);
   function setMessage(value: string) {
@@ -226,30 +200,34 @@ function App() {
   const displayedMessage = noticeVideo
     ? processingNotice(videos.find(video => video.id === noticeVideo.id) || noticeVideo)
     : message;
-  const [percent, setPercent] = useState(0);
   const [selected, setSelected] = useState('');
+  const playerContainer = useRef<HTMLDivElement>(null);
+  function scrollToPlayer() {
+    const container = playerContainer.current;
+    if (!container) return;
+    container.focus({ preventScroll: true });
+    container.scrollIntoView({
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+      block: 'start',
+    });
+  }
+  function watchSession(id: string) {
+    if (selected === id) scrollToPlayer();
+    else setSelected(id);
+  }
+  useEffect(() => {
+    if (!selected) return;
+    const frame = requestAnimationFrame(scrollToPlayer);
+    return () => cancelAnimationFrame(frame);
+  }, [selected]);
   const [uploading, setUploading] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
-  const [savedUpload, setSavedUpload] = useState<any>(null);
-  const fileInput = useRef<HTMLInputElement>(null);
-  const [sessionAction, setSessionAction] = useState<{ id: string; kind: 'retry' | 'delete' } | null>(null);
+  const [sessionAction, setSessionAction] = useState<{ id: string; kind: 'retry' | 'delete' | 'stop' } | null>(null);
   const actionBusy = useRef(false);
-
-  function readSavedUpload() {
-    try {
-      return JSON.parse(localStorage.getItem('upload') || 'null');
-    } catch {
-      return null;
-    }
-  }
-
-
-  const paused = useRef(false);
-  const busy = useRef(false);
-  const current = useRef<any>(null);
 
   function clearSession() {
     setAuth('signed-out');
+    setUploading(false);
     setVideos([]);
     setSelected('');
     setPassword('');
@@ -286,34 +264,6 @@ function App() {
     };
   }, []);
 
-  // Restore display metadata, but read confirmed bytes from storage.
-  useEffect(() => {
-    if (auth !== 'signed-in') return;
-    let disposed = false;
-    const saved = readSavedUpload();
-    if (!saved) return;
-
-    current.current = saved;
-    setSavedUpload(saved);
-    setTitle(saved.title || '');
-    setPercent(Math.min(99, Math.floor(((saved.confirmedBytes || 0) / saved.size) * 100)));
-    setMessage('Unfinished upload found. Select the original file to resume.');
-
-    api(`uploads/${saved.id}/parts`).then((parts) => {
-      if (disposed) return;
-      const confirmedBytes = parts.reduce((sum: number, part: any) => sum + Number(part.Size || 0), 0);
-      const restored = { ...saved, confirmedBytes };
-      localStorage.setItem('upload', JSON.stringify(restored));
-      current.current = restored;
-      setSavedUpload(restored);
-      setPercent(Math.min(99, Math.floor(confirmedBytes / saved.size * 100)));
-    }).catch((error) => {
-      if (!disposed) setMessage(`Could not verify saved upload: ${String(error)}`);
-    });
-
-    return () => { disposed = true; };
-  }, [auth]);
-
   // Only fetch the admin session list after authentication.
   useEffect(() => {
     if (auth !== 'signed-in') return;
@@ -343,200 +293,26 @@ function App() {
     };
   }, [auth]);
 
-  function resetUploadForm() {
-    setFile(undefined);
-    setTitle('');
-    setPercent(0);
-    setSavedUpload(null);
-    current.current = null;
-    paused.current = false;
-    if (fileInput.current) fileInput.current.value = '';
-  }
-
-  async function upload() {
-    if (!file || busy.current) return;
-
-    busy.current = true;
-    paused.current = false;
-    setUploading(true);
-    setMessage('Preparing upload…');
-
-    try {
-      const saved = readSavedUpload();
-      if (saved && (saved.filename !== file.name || saved.size !== file.size || saved.modified !== file.lastModified)) {
-        throw new Error('Select the original file for this upload, or cancel the saved upload before starting a different one.');
-      }
-
-      let video =
-        saved &&
-        saved.filename === file.name &&
-        saved.size === file.size &&
-        saved.modified === file.lastModified
-          ? saved
-          : await api('uploads', {
-              title: title || file.name,
-              filename: file.name,
-              size: file.size,
-            });
-
-      video = { ...video, modified: file.lastModified };
-      current.current = video;
-      setSavedUpload(video);
-      localStorage.setItem('upload', JSON.stringify(video));
-
-      const existing = await api(`uploads/${video.id}/parts`);
-
-      const parts: { PartNumber: number; ETag: string }[] =
-        existing.map((part: any) => ({
-          PartNumber: part.PartNumber,
-          ETag: part.ETag,
-        }));
-
-      const partSize = 64 * 1024 * 1024;
-      let sent = existing.reduce(
-        (total: number, part: any) => total + part.Size,
-        0,
-      );
-
-      setPercent(Math.min(99, Math.floor((sent / file.size) * 100)));
-
-      const started = Date.now();
-      let transferred = 0;
-
-      for (
-        let partNumber = 1;
-        partNumber <= Math.ceil(file.size / partSize);
-        partNumber++
-      ) {
-        if (parts.some((part) => part.PartNumber === partNumber)) continue;
-
-        if (paused.current) {
-          setMessage('Paused. Click Upload / Resume to continue.');
-          return;
-        }
-
-        const blob = file.slice(
-          (partNumber - 1) * partSize,
-          partNumber * partSize,
-        );
-
-        const { url } = await api(`uploads/${video.id}/part`, {
-          part: partNumber,
-        });
-
-        const etag = await new Promise<string>((resolve, reject) => {
-          const xhr = new XMLHttpRequest();
-          xhr.open('PUT', url);
-
-          xhr.upload.onprogress = (event) => {
-            setPercent(Math.min(
-              99,
-              Math.floor(((sent + event.loaded) / file.size) * 100),
-            ));
-
-            const seconds = Math.max((Date.now() - started) / 1000, 0.1);
-            const speed = (transferred + event.loaded) / seconds;
-            const remaining = Math.max(
-              0,
-              file.size - sent - event.loaded,
-            );
-
-            setMessage(
-              `${(speed / 1024 ** 2).toFixed(1)} MB/s · ` +
-              `ETA ${Math.ceil(remaining / Math.max(1, speed))} seconds`,
-            );
-          };
-
-          xhr.onload = () => {
-            if (xhr.status >= 200 && xhr.status < 300) {
-              resolve(xhr.getResponseHeader('ETag') || '');
-            } else {
-              reject(new Error(
-                `Storage HTTP ${xhr.status}: ` +
-                xhr.responseText.slice(0, 700),
-              ));
-            }
-          };
-
-          xhr.onerror = () => {
-            reject(new Error(
-              'Network interrupted. Click Upload / Resume to continue.',
-            ));
-          };
-
-          xhr.send(blob);
-        });
-
-        if (!etag) throw new Error('Storage CORS must expose ETag.');
-
-        parts.push({ PartNumber: partNumber, ETag: etag });
-        sent += blob.size;
-        transferred += blob.size;
-        video = { ...video, confirmedBytes: sent };
-        localStorage.setItem('upload', JSON.stringify(video));
-        current.current = video;
-        setSavedUpload(video);
-      }
-
-      setMessage('Finalizing upload…');
-      await api(`uploads/${video.id}/complete`, { parts });
-
-      localStorage.removeItem('upload');
-      resetUploadForm();
-      setMessage('');
-      setNoticeVideo({ id: video.id, title: video.title || file.name, status: 'UPLOADED' });
-    } catch (error) {
-      handleError(error);
-    } finally {
-      busy.current = false;
-      setUploading(false);
-    }
-  }
-
-  async function cancelUpload() {
-    if (busy.current) {
-      paused.current = true;
-      setMessage(
-        'Pausing after the current part. Click Cancel again once paused.',
-      );
-      return;
-    }
-
-    const video =
-      current.current ||
-      readSavedUpload();
-
-    if (!video) {
-      resetUploadForm();
-      setMessage('Upload form cleared.');
-      return;
-    }
-
-    try {
-      await api(`uploads/${video.id}/cancel`, {});
-      localStorage.removeItem('upload');
-      resetUploadForm();
-      setMessage('Upload cancelled.');
-    } catch (error) {
-      handleError(error);
-    }
-  }
-
-  async function manageSession(video: any, kind: 'retry' | 'delete') {
+  async function manageSession(video: any, kind: 'retry' | 'delete' | 'stop') {
     if (actionBusy.current) return;
     if (kind === 'delete' && !window.confirm(
       `Delete “${video.title}”? This permanently removes the original video, playback files, and session record.`,
     )) return;
+    if (kind === 'stop' && !window.confirm(`Stop processing “${video.title}”? The original stays saved. Restart begins encoding again from the beginning.`)) return;
     actionBusy.current = true;
     setSessionAction({ id: video.id, kind });
-    setMessage(kind === 'delete' ? 'Deleting session and stored files…' : 'Queuing processing…');
+    setMessage(kind === 'delete' ? 'Deleting session and stored files…' : kind === 'stop' ? 'Requesting processing stop…' : 'Queuing processing…');
     if (kind === 'delete' && selected === video.id) setSelected('');
     try {
-      await api(`admin/videos/${video.id}/${kind}`, {});
+      const response = await api(`admin/videos/${video.id}/${kind}`, {});
       if (kind === 'delete') {
         setVideos(previous => previous.filter(item => item.id !== video.id));
         try { localStorage.removeItem(`watch:${video.id}`); } catch { /* Optional per-device playback history. */ }
         setMessage(`“${video.title}” deleted.`);
+      } else if (kind === 'stop') {
+        setVideos(previous => previous.map(item => item.id === video.id ? { ...item, status: response.status || 'STOPPING', estimatedCompletionAt: null } : item));
+        setMessage('');
+        setNoticeVideo({ id: video.id, title: video.title, status: response.status || 'STOPPING' });
       } else {
         setVideos(previous => previous.map(item => item.id === video.id
           ? { ...item, status: 'UPLOADED', progress: 0, error: null, estimatedCompletionAt: null, processingStage: null }
@@ -557,7 +333,6 @@ function App() {
     try {
       await api('auth/logout', {});
       clearSession();
-      setPercent(0);
       setMessage('');
     } catch (error) {
       handleError(error);
@@ -634,72 +409,7 @@ function App() {
 
       {auth === 'signed-in' && (
         <>
-          <section>
-            <h2>{savedUpload ? 'Continue your upload' : 'Publish a session'}</h2>
-          {savedUpload && (
-            <div role="status" style={{ border: '1px solid #555563', padding: 16, borderRadius: 8, marginBottom: 16 }}>
-              <strong>{savedUpload.title || savedUpload.filename}</strong>
-              <p style={{ marginBottom: 8 }}>{savedUpload.filename} · {(savedUpload.size / 1024 ** 2).toFixed(1)} MiB</p>
-              <p style={{ marginTop: 0 }}>Completed parts are saved. Select the original file to continue from saved progress.</p>
-              {!file && <button type="button" className="secondary" onClick={() => fileInput.current?.click()}>Select original file to resume</button>}
-            </div>
-          )}
-            <label>
-              Title
-              <input
-                value={title}
-                disabled={!!savedUpload || uploading}
-                onChange={(event) => setTitle(event.target.value)}
-              />
-            </label>
-            <label>
-              Video file
-              <input
-                type="file"
-                ref={fileInput}
-              accept="video/*"
-                disabled={uploading}
-                onChange={(event) => setFile(event.target.files?.[0])}
-              />
-            </label>
-
-            <div className="actions">
-              <button
-                disabled={!file || uploading}
-                onClick={() => void upload()}
-              >
-                Upload / Resume
-              </button>
-              <button
-                className="secondary"
-                disabled={!uploading}
-                onClick={() => {
-                  paused.current = true;
-                  setMessage('Will pause after the current 64 MiB part.');
-                }}
-              >
-                Pause
-              </button>
-              <button
-                className="secondary"
-                disabled={!file && !savedUpload && !uploading}
-                onClick={() => void cancelUpload()}
-              >
-                Cancel
-              </button>
-            </div>
-
-            <div className="progress-heading">
-              <span>Upload progress</span>
-              <strong>{percent}%</strong>
-            </div>
-            <progress
-              className="upload-progress"
-              max={100}
-              value={percent}
-              aria-label="Upload progress"
-            />
-          </section>
+          <BatchUploader videos={videos} onBusy={setUploading} onAuthError={handleError} />
 
           <h2>Sessions</h2>
           {videos.length === 0 && <p>No sessions yet.</p>}
@@ -754,6 +464,8 @@ function App() {
                     <p>Queued for processing. Waiting for an available worker…</p>
                   )}
                   {video.status === 'RETRYING' && <p>Processing will retry automatically. Your original upload is saved.</p>}
+                  {video.status === 'STOPPING' && <p role="status">Stopping processing and cleaning partial files… Restart and Delete will be available when cleanup finishes.</p>}
+                  {video.status === 'STOPPED' && <p>Processing stopped. The original is saved. Restart begins encoding from the beginning.</p>}
                   {video.status === 'DELETING' && <p>Deletion is unfinished. Try deleting again to complete cleanup.</p>}
                   {video.status === 'UPLOADING' && (
                     <p>Waiting for the upload to finish.</p>
@@ -766,16 +478,21 @@ function App() {
                   {video.status === 'READY' && (
                     <>
                       <p className="ready-message">Ready to watch.</p>
-                      <button onClick={() => setSelected(video.id)}>
+                      <button onClick={() => watchSession(video.id)}>
                         Watch session
                       </button>
                     </>
                   )}
-                  {['READY', 'FAILED', 'DELETING'].includes(video.status) && (
+                  {['UPLOADED', 'PROCESSING', 'RETRYING'].includes(video.status) && (
+                    <button type="button" className="secondary" disabled={!!sessionAction} onClick={() => void manageSession(video, 'stop')}>
+                      {sessionAction?.id === video.id && sessionAction?.kind === 'stop' ? 'Stopping…' : 'Stop processing'}
+                    </button>
+                  )}
+                  {['READY', 'FAILED', 'STOPPED', 'DELETING'].includes(video.status) && (
                     <div className="actions" style={{ marginTop: 16 }}>
-                      {video.status === 'FAILED' && (
+                      {['FAILED', 'STOPPED'].includes(video.status) && (
                         <button type="button" disabled={!!sessionAction} onClick={() => void manageSession(video, 'retry')}>
-                          {sessionAction?.id === video.id && sessionAction?.kind === 'retry' ? 'Queuing…' : 'Retry processing'}
+                          {sessionAction?.id === video.id && sessionAction?.kind === 'retry' ? 'Queuing…' : video.status === 'STOPPED' ? 'Restart processing' : 'Retry processing'}
                         </button>
                       )}
                       <button type="button" className="secondary" disabled={!!sessionAction}
@@ -790,7 +507,11 @@ function App() {
             })}
           </div>
 
-          {selected && <Player key={selected} id={selected} onClose={() => setSelected('')} />}
+          {selected && (
+            <div ref={playerContainer} tabIndex={-1} role="region" aria-label="Session player" style={{ scrollMarginTop: 24 }}>
+              <Player key={selected} id={selected} onClose={() => setSelected('')} />
+            </div>
+          )}
         </>
       )}
     </main>

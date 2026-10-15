@@ -48,3 +48,10 @@ video { width: 100%; max-height: 65vh; background: #000; }
   .grid { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: reduce) { progress::-webkit-progress-value { transition: none; } }
+
+.batch-upload-row { border: 1px solid #373741; border-radius: 10px; padding: 18px; margin-top: 18px; }
+.batch-upload-row .progress-heading { gap: 12px; flex-wrap: wrap; overflow-wrap: anywhere; }
+.batch-upload-row textarea { display: block; width: 100%; box-sizing: border-box; min-height: 70px; background: #101014; color: inherit; border: 1px solid #555563; border-radius: 6px; padding: 10px; font: inherit; }
+.batch-upload-row progress { width: 100%; }
+.status-badge.stopping { color: #fde68a; background: #49381c; }
+.status-badge.stopped { color: #d1d5db; background: #373741; }

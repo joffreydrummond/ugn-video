@@ -17,6 +17,7 @@ model Video {
  duration Float?
  error String?
  createdAt DateTime @default(now())
+ processingToken String?
  processingStage String?
  estimatedCompletionAt DateTime?
  processingHeartbeatAt DateTime?

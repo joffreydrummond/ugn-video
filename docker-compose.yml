@@ -6,14 +6,16 @@ x-app: &app
   environment:
     DATABASE_URL: postgresql://ugn:ugn@postgres:5432/ugn
     REDIS_HOST: redis
-    S3_ENDPOINT: http://localstack:4566
-    S3_BROWSER_ENDPOINT: http://localhost:4566
-    S3_PUBLIC_URL: http://localhost:4566/media
-    S3_REGION: us-east-1
-    S3_BUCKET: media
+    S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
+    S3_BROWSER_ENDPOINT: ${S3_BROWSER_ENDPOINT:-http://localhost:9000}
+    S3_PUBLIC_URL: ${S3_PUBLIC_URL:-http://localhost:9000/media}
+    S3_REGION: ${S3_REGION:-us-east-1}
+    S3_BUCKET: ${S3_BUCKET:-media}
     S3_FORCE_PATH_STYLE: "true"
-    S3_ACCESS_KEY: test
-    S3_SECRET_KEY: test
+    UPLOAD_IDLE_DAYS: ${UPLOAD_IDLE_DAYS:-7}
+    FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:5173}
+    S3_ACCESS_KEY: ${S3_ACCESS_KEY:-ugnlocal}
+    S3_SECRET_KEY: ${S3_SECRET_KEY:-local-development-only-password}
   depends_on:
     postgres:
       condition: service_healthy
@@ -49,6 +51,7 @@ services:
       retries: 30
 
   localstack:
+    profiles: [legacy]
     image: localstack/localstack:4.0.3
     environment:
       SERVICES: s3
@@ -64,69 +67,74 @@ services:
       retries: 30
       start_period: 10s
 
-  storage-init:
-    image: localstack/localstack:4.0.3
-    depends_on:
-      localstack:
-        condition: service_healthy
+  minio:
+    image: ugn-minio:local
+    build:
+      context: ./infra
+      dockerfile: Minio.Dockerfile
+    command: server /data
     environment:
-      AWS_ACCESS_KEY_ID: test
-      AWS_SECRET_ACCESS_KEY: test
-      AWS_DEFAULT_REGION: us-east-1
-      AWS_EC2_METADATA_DISABLED: "true"
-    entrypoint: ["/bin/sh", "-ec"]
-    command:
-      - |
-        aws --endpoint-url=http://localstack:4566 s3api head-bucket --bucket media 2>/dev/null ||
-          aws --endpoint-url=http://localstack:4566 s3api create-bucket --bucket media
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-ugnlocal}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-local-development-only-password}
+      MINIO_API_STALE_UPLOADS_EXPIRY: 2160h
+      MINIO_API_CORS_ALLOW_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:5173}
+    ports:
+      - "9000:9000"
+    volumes:
+      - mediadata:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
 
-        cat > /tmp/cors.json <<'JSON'
-        {
-          "CORSRules": [
-            {
-              "AllowedOrigins": ["http://localhost:5173"],
-              "AllowedMethods": ["GET", "HEAD", "PUT", "POST", "DELETE"],
-              "AllowedHeaders": ["*"],
-              "ExposeHeaders": ["ETag", "Content-Length", "Content-Range"],
-              "MaxAgeSeconds": 3600
-            }
-          ]
-        }
-        JSON
-
-        aws --endpoint-url=http://localstack:4566 s3api put-bucket-cors \
-          --bucket media \
-          --cors-configuration file:///tmp/cors.json
-
-        cat > /tmp/policy.json <<'JSON'
-        {
-          "Version": "2012-10-17",
-          "Statement": [
-            {
-              "Effect": "Allow",
-              "Principal": "*",
-              "Action": "s3:GetObject",
-              "Resource": "arn:aws:s3:::media/videos/*"
-            }
-          ]
-        }
-        JSON
-
-        aws --endpoint-url=http://localstack:4566 s3api put-bucket-policy \
-          --bucket media \
-          --policy file:///tmp/policy.json
-
-        echo "Video storage initialized."
+  storage-init:
+    <<: *app
+    depends_on:
+      minio:
+        condition: service_healthy
+    command: npx tsx infra/init-storage.ts
 
   backend:
     <<: *app
     command: sh -c "npx prisma db push --schema apps/backend/prisma/schema.prisma && npm start -w @ugn/backend"
     ports:
       - "3000:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    restart: unless-stopped
 
   worker:
     <<: *app
     command: npm start -w @ugn/worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      storage-init:
+        condition: service_completed_successfully
+      backend:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://ugn:ugn@postgres:5432/ugn
+      REDIS_HOST: redis
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_BUCKET: ${S3_BUCKET:-media}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-ugnlocal}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-local-development-only-password}
+      WORKER_TMP_ROOT: /work
+      WORKER_MAX_SCRATCH_GIB: ${WORKER_MAX_SCRATCH_GIB:-100}
+    volumes:
+      - workerscratch:/work
+    init: true
+    restart: unless-stopped
     deploy:
       resources:
         limits:
@@ -142,3 +150,5 @@ services:
 volumes:
   pgdata:
   redisdata:
+  mediadata:
+  workerscratch:

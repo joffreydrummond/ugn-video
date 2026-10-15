@@ -135,14 +135,18 @@ export function Player({ id, onClose }: { id: string; onClose: () => void }) {
   function keyboard(event: React.KeyboardEvent<HTMLVideoElement>) {
     const video = event.currentTarget;
     if (event.target !== video) return;
-    if (event.key === ' ' || event.key.toLowerCase() === 'k') {
+    // Space belongs to the native video controls, including their keyup behavior.
+    // Handling it here as well can toggle playback twice for one press.
+    if (event.key === ' ') return;
+    if (event.key.toLowerCase() === 'k') {
       event.preventDefault();
+      if (event.repeat) return;
       if (video.paused) void video.play().catch(() => setQualityNote('Press the player Play control to begin.'));
       else video.pause();
     } else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
       event.preventDefault();
       if (Number.isFinite(video.duration)) video.currentTime = Math.max(0, Math.min(video.duration, video.currentTime + (event.key === 'ArrowRight' ? 10 : -10)));
-    } else if (event.key.toLowerCase() === 'm') { event.preventDefault(); video.muted = !video.muted; }
+    } else if (event.key.toLowerCase() === 'm') { event.preventDefault(); if (!event.repeat) video.muted = !video.muted; }
   }
   async function copyLink() {
     const url = new URL(window.location.href); url.hash = watchHash(id);

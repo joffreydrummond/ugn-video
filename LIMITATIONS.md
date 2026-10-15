@@ -1,49 +1,31 @@
 # Current limitations
 
-## Implemented, awaiting updated-stack verification
+Updated October 15, 2026. Actual passed scenarios and evidence are in VERIFICATION.md; the completion checklist tracks remaining work.
 
-- Persistent MinIO object storage; PostgreSQL and Redis persistent volumes.
-- Seven-day idle upload cleanup, orphan multipart scanning, recoverable storage cleanup.
-- Reconciliation of completed-upload/database/queue gaps; exhausted stalled jobs become FAILED.
-- NestJS worker lifecycle, BullMQ lock/stall recovery, per-attempt DB fencing, lock-loss cancellation.
-- Batch selection with sequential transfer, per-file title/description, pause/resume and cancellation.
-- STOPPING/STOPPED processing lifecycle; restart and delete retain/remove originals as appropriate.
-- CPU/memory limits, scratch preflight, periodic disk monitor and dead-attempt cleanup.
+## Assessment gaps
 
-The updated Docker/MinIO stack has not run in the preparation environment (Docker is unavailable). Earlier short-video, resume, retry scheduling, deletion and message-display tests were reported working by Joffrey on LocalStack. Do not treat those as verification of the new storage stack.
-
-## Remaining assessment work
-
-- Public catalog, shareable session routes and manual quality selection are implemented. Verify native/hls.js switching, public error states and accessibility in actual browsers/devices.
-- Optional custom thumbnail; shared client/server zod form validation and media-container allowlist. Description fields and basic length/size/extension checks are included.
-- Required frontend libraries/theme and meaningful shared contracts consumption.
-- Verify actual rendition bandwidth/resolution, no unnecessary upscaling, adaptive switching and segment alignment.
-- Host/API/storage URLs remain localhost by default; device access needs coordinated reachable origins/endpoints.
-- Test 10 GB+ upload/resume, 10-hour encoding/seeking, browser/device/native playback; document exact observed results.
-- Broader critical-path/live integration tests; ARCHITECTURE.md and ANSWERS.md W1-W7.
+- No verified 10 GB+ upload or actual 10-hour processing/startup/late seeking yet.
+- Multipart inventory returned [] despite an extant upload with four directly readable parts. Root cause unknown; cancelled/expired storage deletion and orphan discovery need reliable direct evidence.
+- Full client/server zod validation, actual container allowlist and boundary testing require audit. Renamed text-as-video rejection has passed.
+- Reviewed frontend package lacks required Tailwind/theme/fonts, react-hook-form/zod, Framer Motion, lucide-react and react-hot-toast. Shared-contract adoption needs audit.
+- Safari/iPhone/iPad, Samsung Internet and Instagram/Facebook/TikTok webviews untested. Samsung S23 Ultra Chrome and desktop Chrome/Edge/Firefox were reported working; VLC passed.
+- Resource guard behavior under load, racing/repeated requests, queued Stop, STOPPED deletion and interrupted deletion need live verification.
+- Fresh isolated installation, S3 environment-only portability, docs W1–W7 and final full local checks remain.
+- Optional custom-thumbnail upload is not implemented.
 
 ## Intentional boundaries
 
-- Processing controls and the new queue have automated checks but still need live Docker/browser verification.
-- Queue metadata persists locally; browser file handles do not. Manage the queue in one admin tab. A transfer error pauses the queue rather than skipping a file.
-- Stop requires backend maintenance and a worker exit/lock release; a dead worker can delay acknowledgement until its old lock expires. Restart is disabled during STOPPING.
-- Finalizing an upload briefly disables upload cancellation; use Stop processing after completion.
+- Queue/history/watch position are browser-profile local; file access requires reselection after tab close. Resume identity is name/size/modification time, not a cryptographic fingerprint.
+- Expired browser rows currently say Cancelled. History is capped at 50 and is not true per-user/server-backed history.
+- Sequential 64 MiB browser parts and one job per worker; no validated multiworker capacity model.
+- Encodes restart from the original after crash/retry. Fixed target heights may upscale small sources; advertised bandwidth/resolution and aspect ratios need review.
+- PostgreSQL and Redis reconciliation is recoverable coordination, not an exactly-once transaction.
+- CPU/memory limits and application disk monitoring are not hard disk quotas. Original storage and scratch share host capacity.
+- Cleanup needs backend/dependencies running. Seven-day idle window updates on signing/listing parts; separate MinIO stale-upload fallback is based on initiation time.
+- Missing playback returns HTTP 200 with a NOT_FOUND payload; richer HTTP status semantics remain a possible improvement.
+- Current CORS accepts one configured origin. Localhost reviewer defaults and temporary LAN testing are separate configurations. Remote demo needs HTTPS hosting.
+- One environment-configured admin, no signup or account-backed credentials. Rate limits, production migrations, private paid CDN media and operational hardening remain production work.
+- Legacy migration copies completed objects up to 5 GiB, size-verifies only, and cannot migrate unfinished multipart uploads.
+- Tests mostly mock dependencies. Fifty preparation tests and a successful host backend check are not a complete live integration suite.
 
-- Restarting an interrupted encode starts from the original. No encoding checkpoint/resume.
-- PostgreSQL and Redis are not one transaction. Stable job IDs and periodic reconciliation give recoverability, not exactly-once execution.
-- Cleanup requires a running backend and available dependencies. Outages defer cleanup. Storage's separate 90-day stale-multipart ceiling is a fallback, based on initiation time, not activity.
-- Seven-day idle expiration uses part-signing and ListParts activity; browser polling the catalog does not extend it. Paused uploads must be resumed within that window.
-- Disk monitoring is a two-second application guard, not an OS quota. It can overshoot between checks. Scratch and MinIO data share host capacity; budget for both.
-- Processing concurrency is one per worker. Do not scale workers until shared-disk budgets and distributed failure scenarios are tested.
-- Existing failed output objects remain available for retry/deletion and are removed when the session is deleted. Automatic purging of failed sessions is not implemented.
-- The legacy-to-MinIO helper copies completed objects up to 5 GiB each and size-verifies them. Larger existing originals require a multipart-capable migration tool. New browser uploads still use multipart and allow 20 GiB.
-- Existing unfinished multipart uploads cannot migrate between storage systems. Finish/cancel them before switching.
-- MinIO is local development infrastructure with public reads only for videos/*; originals remain private. Real S3 needs equivalent CORS/policy configuration. Do not use local demo credentials or HTTP cookie settings as production configuration.
-- Resume identity currently uses filename, size and modification time rather than a content fingerprint.
-- Rate limiting, account-backed admin credentials, production migrations, CDN/private playback and stronger operational controls remain production work.
-
-Do not commit videos, .env, signed URLs or the confidential assessment PDF.
-
-## Public playback update
-
-The public page, shared player and typed playback/catalog payloads are implemented and unit checked. Existing numeric rendition heights remain compatible; sources adds explicit quality URLs. Browser/native playback still needs actual observation. The API host can be configured with VITE_API_URL; unchanged localhost media/origin settings are not phone-ready.
+Supplemental TypeScript files have now been received and audited. The diagnostic update adds direct session snapshots and post-deletion verification; it does not resolve the root cause of empty multipart inventory or change production cleanup behavior.

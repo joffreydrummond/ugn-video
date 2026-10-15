@@ -31,7 +31,7 @@ export function BatchUploader({ videos, onBusy, onAuthError }: {
   const files = useRef(new Map<string, File>());
   const [running, setRunning] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
-  const [note, setNote] = useState('Select videos, review their titles, then start the upload queue.');
+  const [note, setNote] = useState('Choose videos to add, or reselect an unfinished original to resume.');
   const [cancelling, setCancelling] = useState<string[]>([]);
   const [selectedCount, setSelectedCount] = useState(0);
   const busy = useRef(false);
@@ -92,7 +92,7 @@ export function BatchUploader({ videos, onBusy, onAuthError }: {
         rejected.push(file.name); continue;
       }
       const existing = next.find(item => unfinished(item) && sameFile(item, file));
-      if (existing) { files.current.set(existing.key, file); continue; }
+      if (existing) { files.current.set(existing.key, file); existing.note = 'File matched. Click Start / Resume queue to continue from saved parts.'; continue; }
       const item: UploadEntry = { key: crypto.randomUUID(), filename: file.name, size: file.size,
         modified: file.lastModified, title: file.name.slice(0, 200), description: '', state: 'pending',
         confirmedBytes: 0, percent: 0, note: 'Waiting to upload.' };
@@ -239,7 +239,11 @@ export function BatchUploader({ videos, onBusy, onAuthError }: {
       const canEdit = !item.serverId && unfinished(item) && !isActive;
       return <div key={item.key} className="batch-upload-row">
         <div className="progress-heading"><strong>{index + 1}. {item.filename}</strong><span>{item.state === 'uploaded' ? video?.status || 'Upload received' : item.state}</span></div>
-        <p>{(item.size / 1024 ** 2).toFixed(1)} MiB{unfinished(item) && !files.current.has(item.key) ? ' · Reselect original file to resume' : ''}</p>
+        <p>{(item.size / 1024 ** 2).toFixed(1)} MiB</p>
+        {unfinished(item) && !files.current.has(item.key) && <p role="status">
+          <strong>Original file needed. Your progress is saved.</strong><br />
+          Use Choose Files above to select <strong>{item.filename}</strong> again, then click Start / Resume queue.
+        </p>}
         <label>Title<input value={item.title} maxLength={200} disabled={!canEdit} onChange={event => update(item.key, { title: event.target.value })} /></label>
         <label>Description (optional)<textarea value={item.description} maxLength={5000} disabled={!canEdit}
           onChange={event => update(item.key, { description: event.target.value })} /></label>

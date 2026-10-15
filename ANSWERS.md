@@ -1,97 +1,188 @@
-# Written answers
+# Design questions
 
-These answers describe the current implementation and distinguish proposed production
-work. Verification status is in VERIFICATION.md. Pricing assumptions are dated
-October 15, 2026; detailed arithmetic and sources are in COST-ESTIMATE.md.
+## W1. What happens if Wi-Fi drops at 63% of a 10 GB upload? What if the laptop stays closed overnight?
 
-## W1 — Wi-Fi drops at 63%, then returns or the laptop closes overnight
+The admin should not have to upload the entire file again. I split the file into
+64 MiB parts and send them directly from the browser to storage. Each completed
+part is saved independently. If Wi-Fi drops at 63%, the current transfer stops,
+the queue pauses, and the parts that already reached storage stay there.
 
-The interrupted PUT fails/aborts; completed 64 MiB parts remain in storage and the
-queue pauses. After reconnecting, the admin clicks Resume. The API lists actual
-saved parts and signs fresh URLs, so the browser sends missing parts rather than
-trusting 63% from localStorage. Only the incomplete part needs retransmission.
-After tab close, the queue remembers metadata but cannot reopen a local file without
-permission: the admin reselects the original using Choose Files, then clicks Resume.
-An overnight gap is within the default seven-day idle period; beyond it, cleanup
-may expire the upload and a fresh upload is required. No bytes pass through the API.
-This is explicitly resumed, not guaranteed background transfer while asleep.
+When the connection returns 20 minutes later, the admin clicks Resume. Before
+sending more data, the app asks storage which parts it actually received. That
+answer determines where the upload continues. The progress bar may move back a
+little because the interrupted part was not fully saved, but completed parts are
+reused. The API provides fresh upload links if the previous ones have expired.
 
-## W2 — Worker crashes nine hours into processing
+Closing the laptop introduces one extra step if the page closes or reloads. The
+app remembers the upload's name, size and progress in that browser, but it does
+not retain access to the file itself. It tells the admin which original file to
+select again. After selecting it and clicking Resume, the same saved-parts check
+runs. Uploading does not continue while the laptop is asleep.
 
-Lock renewal stops; after expiry BullMQ detects the stalled job and another attempt
-claims it. The job retains its stable video ID; processingToken and lock checks
-restrict stale worker writes. Recovery was tested by killing/restarting the worker.
-This version downloads the original and re-encodes every rendition, so all nine hours
-of compute may be lost. Completed object storage input survives. With another week,
-I would first checkpoint completed renditions, then use independently retriable,
-keyframe-aligned chunks with immutable attempt output, per-chunk manifests and a final
-validated publication step. That reduces work loss but adds A/V sync, discontinuity,
-encoder-configuration and partial-output recovery concerns.
+The default idle limit is seven days, so an overnight interruption normally stays
+resumable. Once an upload expires, cleanup removes its saved parts and the admin
+must start a new upload. I tested closed-tab and network recovery on smaller files,
+and the 12.08 GB DJI upload also resumed successfully after closing the tab and
+reselecting the original.
 
-## W3 — Monthly AWS estimate and FFmpeg versus MediaConvert
+## W2. What happens if a worker crashes nine hours into a ten-hour video? How much work is lost?
 
-Assume 200 new ten-hour/10 GB inputs each month, one-month retention, three H.264
-outputs and 2,000 viewing hours per video: **400,000 viewer-hours**, not 2,000 total.
-At an assumed delivered average of 3 Mbps, viewers consume about 540 TB decimal.
-A US CloudFront pay-as-you-go model gives roughly $24.2k egress plus $230 segment
-requests; S3 storage is about $263 under the stated ladder assumptions. Budgeted
-FFmpeg compute is $2.4k (6,000 instance-hours at an assumed $0.40/hour and one realtime
-pass per rendition); MediaConvert Basic is about $3.4k for 600,000 normalized minutes.
-Totals are approximately **$27.1k FFmpeg or $28.1k MediaConvert**, excluding platform,
-logs, scratch EBS and taxes. These are capacity assumptions, not measured throughput
-or a quote. I would benchmark first: use FFmpeg where utilization and operational
-control justify it, MediaConvert for burst capacity and reduced worker operations.
-Delivery bitrate/region dominate cost; input file size does not predict viewing cost.
+The original upload remains in storage. The worker's lock stops renewing when it
+crashes. Once that lock expires, BullMQ can recognize the stalled job and recover
+it when a healthy worker is available. The lock duration is 120 seconds, so recovery
+is not immediate. In the crash test, the same video job restarted automatically
+and eventually reached READY.
 
-## W4 — Desktop Chrome works, iPhone or Instagram does not
+The significant tradeoff is that this implementation starts encoding again from
+the original. It does not save a reusable encoding checkpoint. If the worker crashes
+after nine hours of processing, those nine hours of work may need to be repeated.
+The admin does not need to upload the source again. Attempt ownership checks also
+help prevent an old worker from updating the replacement attempt's progress.
 
-Common causes include codec/profile or pixel-format incompatibility, unavailable
-Media Source Extensions, autoplay restrictions, missing inline playback, mixed HTTP/
-HTTPS, CORS/MIME mistakes, or an authorization URL that covers the master but not its
-children. The implementation uses H.264/yuv420p with AAC, native HLS detection before
-hls.js, playsInline and user-initiated playback, correct MIME/cache headers and explicit
-allowed origins. Error/retry states do not pretend playback succeeded. Production
-would use HTTPS end to end. Native Safari, HDR conversion and in-app webviews still
-need actual-device testing; Chrome on a Samsung phone is not evidence for iOS.
+My first improvement would be to save and validate each completed rendition so a
+retry could skip it. For longer videos, I would divide the timeline into separately
+retriable sections. A failure would then repeat one section instead of the whole
+set. That requires careful handling of keyframes, audio timing and the final
+playlist, so I kept the initial version simpler and tested its full-restart behavior.
 
-## W5 — Private or paid-only viewing
+## W3. What would 200 ten-hour, 10 GB videos cost each month on AWS? FFmpeg or MediaConvert?
 
-Remove the public S3 grant, enable Block Public Access and restrict origin access to
-CloudFront OAC. An entitlement endpoint would issue short-lived access for a video's
-entire object prefix. Signed cookies suit a browser's many HLS requests; native clients
-need verified cookie propagation or signed child URLs/manifests when cookies are not
-supported. Signing only master.m3u8 is insufficient. Authorize each request at the
-edge while keeping shared segment cache keys independent of viewer identity; never
-cache personalized entitlement responses publicly. Refresh access before expiration
-for long sets and test seeks after expiry. Download revocation is not DRM; use a DRM
-system only if the business requires it. This is a proposal, not implemented here.
+I would separate storage, encoding and viewing costs. The original file size helps
+estimate storage, but it does not tell us how much viewers will download.
 
-## W6 — Port to Next.js 14, React 18, Prisma/MySQL and CloudFront
+For this estimate, I assume 200 new videos each month, one month of retention and
+2,000 viewing hours per video during that month. That is 400,000 viewing hours.
+I also assume viewers receive an average of 3 Mbps across the quality levels and
+that traffic is served in the US/Canada/Mexico CloudFront pricing region. That
+works out to about 540 TB of delivered video each month.
 
-Keep direct S3 multipart uploads, shared validation/contracts, playback API semantics,
-BullMQ/Redis and the independent FFmpeg worker. Put upload/player UI in client
-components; move small orchestration endpoints into Node-runtime Route Handlers or
-retain NestJS behind Next.js. Never route video bytes through Next.js or a serverless
-function. Audit React 18-compatible dependency versions, SSR guards for localStorage,
-and load hls.js only on the client. Change Prisma provider/migrations and replace
-PostgreSQL advisory locks with a MySQL-compatible locking/conditional-transition
-strategy; this part cannot be ported by changing only the connection string. Use
-CloudFront media URLs, OAC/private access if needed, HTTPS cookies and explicit CORS.
-Keep long encoding tasks outside the Next.js request lifecycle.
+| Cost | Approximate monthly amount | Basis |
+| --- | ---: | --- |
+| S3 storage | $263 | Originals plus three streaming versions, using the bitrate assumptions in the cost model |
+| CloudFront delivery | $24,177 | 400,000 viewing hours at 3 Mbps, using regional pay-as-you-go tiers |
+| CloudFront segment requests | $230 | Six-second segments and the published free request allowance |
+| FFmpeg processing | $2,400 | Assumed 6,000 instance-hours at a budgeted $0.40/hour |
+| MediaConvert processing, as an alternative | $3,400 | 600,000 normalized Basic-tier output minutes |
 
-## W7 — Simplifications and another week
+That gives a working estimate of about **$27,100 with FFmpeg** or **$28,100 with
+MediaConvert**. It excludes application/database hosting, temporary disks, logging,
+backups and taxes. A growing archive would also increase storage costs. The FFmpeg
+figure assumes each rendition encodes at real time on the chosen machine; that is
+a planning assumption, not a result measured on this prototype. The full arithmetic,
+frame-rate assumptions and pricing links are in [COST-ESTIMATE.md](COST-ESTIMATE.md).
 
-One environment-configured admin, browser-local history/watch position, sequential
-parts, one job per worker, full re-encode on retry, fixed potentially upscaled heights,
-first-frame poster, development servers and db push are deliberate simplifications.
-Custom-thumbnail upload, captions, DRM and multi-tenant accounts are omitted. The
-suite uses meaningful mocks plus local subprocess checks; it is not a cloud load test.
-10 GB+ and ten-hour measurements are still pending. My next week would prioritize
-those measurements, Safari/webview/screen-reader checks, upload-content fingerprints,
-checkpointed encoding, immutable attempt publication, hard disk quotas and metrics,
-then production auth/migrations, dependency-audit remediation and optimized frontend
-bundles. For personal DJ use I would add source-aware compression presets and an explicit original-retention policy. Optional pre-upload compression must run on the uploader device and must not replace the required 10 GB+ test. New portfolio features come after the reliability and operational gaps.
+I would choose self-hosted FFmpeg when the workload is steady and the team can
+operate the workers economically. MediaConvert becomes attractive when uploads
+arrive in bursts or managing encoding capacity takes too much engineering time.
+I would benchmark the same sample videos before choosing. In either case, viewing
+bandwidth is the largest expense in this example, so output quality and bitrate
+need as much attention as the encoder bill.
 
-Sources: [AWS pricing and assumptions](COST-ESTIMATE.md);
-[AWS signed URLs versus cookies](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-choosing-signed-urls-cookies.html);
-[AWS signed-cookie behavior](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-signed-cookies.html).
+## W4. Why might a video play in Chrome but fail on an iPhone or inside Instagram?
+
+A working desktop player does not guarantee that the same file, player code or
+permissions will work on a phone. I would check these areas first:
+
+- **The encoded video.** A phone may not support the source codec, profile or pixel
+  format. The worker converts uploads into H.264 with yuv420p video and AAC audio
+  where audio exists. This provides a common playback format rather than asking
+  every device to decode the original camera file.
+- **The playback engine.** Some browsers can play HLS directly; others need hls.js.
+  The player checks for native HLS first and uses hls.js when native support is
+  unavailable and the browser supports the required media features.
+- **Playback restrictions.** Mobile browsers can block autoplay with sound. The
+  interface lets the viewer press Play and uses playsInline so playback can stay
+  within the page where supported.
+- **The media requests.** The playlist can load while a segment fails because of
+  CORS, an incorrect content type, mixed HTTP/HTTPS or expired permissions. Every
+  playlist and segment must be reachable, not just the first manifest URL.
+
+The application configures media content types and allowed origins, and it presents
+an error with a retry action when playback fails. A public deployment also needs
+HTTPS throughout. Desktop Chrome, Edge, Firefox, Samsung Chrome and VLC have been
+exercised. Safari and Instagram/Facebook/TikTok webviews still need their own device
+tests; I would not infer those results from desktop playback.
+
+## W5. How would you make videos private or paid-only without losing CDN caching or native playback?
+
+I would start by making the storage bucket private. Only CloudFront would be
+allowed to fetch the media from S3, using Origin Access Control. The application
+would check whether the viewer owns the video or has an active subscription before
+granting temporary playback access.
+
+For a browser, signed CloudFront cookies are a good fit because one video requires
+many requests: the master playlist, a rendition playlist and its segments. Access
+must cover that whole set of files. Protecting only the master URL would leave
+playback broken or the segments exposed.
+
+For a native player, I would verify that its requests carry the required cookies.
+If that client cannot do so, the playback API would return a manifest with signed
+child URLs, including access to its segments. Access would need renewal during
+long sessions so a viewer can still seek after the initial authorization expires.
+
+CloudFront would validate access before serving the cached object. The underlying
+segment URLs and cache keys would remain shared between authorized viewers rather
+than creating a separate cached copy for each person. The entitlement response,
+which is specific to the viewer, would not be publicly cached. This is the next
+access-control design; the assessment currently publishes processed videos publicly.
+Signed access also is not DRM and cannot recall media someone already downloaded.
+
+## W6. What changes when moving this into Next.js 14, React 18, Prisma/MySQL and S3/CloudFront?
+
+The main flow stays the same: the browser uploads parts directly to storage, the
+API records the video and queues processing, a separate worker runs FFmpeg, and
+players fetch HLS from the media host. None of that requires video bytes to pass
+through a Next.js request handler.
+
+I would move the upload and player interfaces into client components because they
+use browser file access, localStorage and video APIs. Browser-only code such as
+hls.js would initialize on the client. I would also check dependency compatibility
+with React 18 instead of assuming the React 19 versions can be copied unchanged.
+The API could remain NestJS behind the web application, or its small orchestration
+endpoints could move into Node-runtime Route Handlers. Encoding would remain a
+separate worker process rather than a long-running web request.
+
+The database change needs more care than replacing the connection string. Prisma
+would use the MySQL provider and matching migrations, and the PostgreSQL advisory
+locks would need replacement. I would use MySQL-compatible transactions and row
+locking, with conditional state updates and the same queue job IDs, then rerun the
+concurrency and recovery tests. Storage configuration would point to S3 for uploads
+and CloudFront for playback, with the appropriate HTTPS cookies and allowed origins.
+
+## W7. What did you simplify, and what would you do with another week?
+
+I kept the project focused on getting an upload into storage reliably, processing
+it outside the API and making the result watchable. There is one configured admin,
+no signup flow, and browser-local upload history and watch position. Upload parts
+and encoding passes run sequentially, with one job per worker. Retries re-encode
+from the original, and the three output heights are fixed even when that means
+upscaling a small source. Custom-thumbnail uploads, captions and paid access are
+outside this version.
+
+The large-file upload and closed-tab resume have passed; processing and playback
+of that file are still being measured. Its duration is about 22 minutes, so a true
+ten-hour startup and late-seek test remains separate work. With another week, I
+would finish those measurements and broaden device testing to Safari, in-app
+browsers and a screen reader. I would then add encoding checkpoints and stronger
+per-attempt output isolation so a failed long job loses less work.
+
+For the DJ-set workflow, I would add presets that account for the source resolution
+and frame rate. The current DJI test is nearly 120 fps; retaining that frame rate
+adds encoding work that may not be needed for a streaming set. I would compare
+30/60 fps outputs, preserve audio quality and avoid upscaling. An explicit policy
+for retaining or deleting originals would help control storage. Compression before
+upload would require a separate local/browser processing step; server compression
+cannot reduce bytes that have already been uploaded.
+
+Before production deployment, I would also replace the development startup and
+Prisma db push workflow with production builds and migrations, strengthen account
+security, review the dependency findings, and add monitoring, backups and disk
+limits. Those changes would make the service easier to operate as a real library
+of sets, beyond the assessment demo.
+
+## References
+
+- [Cost calculations, assumptions and AWS pricing sources](COST-ESTIMATE.md)
+- [CloudFront signed URLs versus signed cookies](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-choosing-signed-urls-cookies.html)
+- [CloudFront signed-cookie behavior](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-signed-cookies.html)
+- [Actual test results and outstanding platform checks](VERIFICATION.md)

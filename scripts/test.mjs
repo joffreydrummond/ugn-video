@@ -1,0 +1,11 @@
+import { readdirSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+const root = dirname(dirname(fileURLToPath(import.meta.url)));
+const folders = ['apps/backend/tests', 'apps/frontend/tests', 'apps/worker/tests'];
+const files = folders.flatMap(folder => readdirSync(join(root, folder)).filter(name => name.endsWith('.test.ts')).sort().map(name => join(folder, name)));
+if (!files.length) throw new Error('No test files found.');
+const result = spawnSync(process.execPath, ['--import', 'tsx', '--test', ...files], { cwd: root, stdio: 'inherit' });
+if (result.error) throw result.error;
+process.exitCode = result.status ?? 1;

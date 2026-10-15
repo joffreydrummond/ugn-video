@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
-import Hls from 'hls.js';
 import './style.css';
 import { api, ApiError } from './api';
 import { BatchUploader } from './BatchUploader';
+import { Player, formatDuration } from './Player';
+import { PublicPage } from './PublicPage';
+import { routeFromHash } from './playback-model';
 
 function readableProcessingError(error: unknown) {
   const detail = String(error || '');
@@ -48,102 +50,6 @@ function processingStage(progress: number) {
   return 'Creating thumbnail and publishing';
 }
 
-function Player({ id, onClose }: { id: string; onClose: () => void }) {
-  const ref = useRef<HTMLVideoElement>(null);
-  const [info, setInfo] = useState<any>(null);
-  const [error, setError] = useState('');
-
-  useEffect(() => {
-    let hls: Hls | undefined;
-    let disposed = false;
-    const element = ref.current;
-
-    api(`videos/${id}/playback`)
-      .then((video) => {
-        if (disposed || !ref.current) return;
-
-        setInfo(video);
-        const element = ref.current;
-
-        if (!video.manifestUrl) {
-          setError('This video is not ready for playback.');
-        } else if (element.canPlayType('application/vnd.apple.mpegurl')) {
-          element.src = video.manifestUrl;
-        } else if (Hls.isSupported()) {
-          hls = new Hls();
-          hls.loadSource(video.manifestUrl);
-          hls.attachMedia(element);
-          hls.on(Hls.Events.ERROR, (_, data) => {
-            if (data.fatal) setError(`Playback error: ${data.details}`);
-          });
-        } else {
-          setError('This browser does not support HLS playback.');
-        }
-      })
-      .catch((error) => {
-        if (!disposed) setError(String(error));
-      });
-
-    return () => {
-      disposed = true;
-      element?.pause();
-      hls?.destroy();
-      if (element) {
-        element.removeAttribute('src');
-        element.load();
-      }
-    };
-  }, [id]);
-
-  return (
-    <section>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, flexWrap: 'wrap', marginBottom: 16 }}>
-        <h2 style={{ margin: 0 }}>{info?.title || 'Video player'}</h2>
-        <button type="button" className="secondary" onClick={onClose}>
-          Close player
-        </button>
-      </div>
-      <video
-        ref={ref}
-        controls
-        playsInline
-        poster={info?.poster}
-        onLoadedMetadata={() => {
-          const element = ref.current;
-          if (!element) return;
-
-          const saved = Number(localStorage.getItem(`watch:${id}`) || 0);
-
-          if (
-            Number.isFinite(saved) &&
-            saved > 0 &&
-            saved < element.duration - 2
-          ) {
-            element.currentTime = saved;
-          }
-        }}
-        onTimeUpdate={() => {
-          localStorage.setItem(
-            `watch:${id}`,
-            String(ref.current?.currentTime || 0),
-          );
-        }}
-      />
-      {error && <p role="alert">{error}</p>}
-    </section>
-  );
-}
-
-function formatDuration(value: unknown) {
-  const seconds = Number(value);
-  if (value == null || !Number.isFinite(seconds) || seconds <= 0) return 'Duration pending';
-  const total = Math.floor(seconds);
-  const hours = Math.floor(total / 3600);
-  const minutes = Math.floor(total / 60) % 60;
-  const remainder = String(total % 60).padStart(2, '0');
-  return hours > 0 ? `${hours}:${String(minutes).padStart(2, '0')}:${remainder}` : `${minutes}:${remainder}`;
-}
-
 function uploadDate(value: unknown) {
   const date = new Date(String(value || ''));
   return Number.isNaN(date.getTime()) ? null : date;
@@ -172,7 +78,7 @@ function SessionPreview({ id, ready }: { id: string; ready: boolean }) {
   return (
     <div className="session-preview">
       {poster && !failed && (
-        <img src={poster} alt="" loading="lazy" decoding="async"
+        <img crossOrigin="anonymous" src={poster} alt="" loading="lazy" decoding="async"
           className={loaded ? 'preview-loaded' : ''}
           onLoad={() => setLoaded(true)} onError={() => setFailed(true)} />
       )}
@@ -183,7 +89,7 @@ function SessionPreview({ id, ready }: { id: string; ready: boolean }) {
   );
 }
 
-function App() {
+function AdminApp() {
   const [auth, setAuth] = useState<
     'checking' | 'signed-out' | 'signed-in'
   >('checking');
@@ -344,6 +250,7 @@ function App() {
       <header>
         <b>UNDERGROUND NIGHTS</b>
         <span>VIDEO STUDIO</span>
+        <a className="studio-public-link" href="#/watch" target="_blank" rel="noopener noreferrer">Public viewing page ↗</a>
         {auth === 'signed-in' && (
           <button
             className="secondary"
@@ -518,4 +425,13 @@ function App() {
   );
 }
 
+function App() {
+  const [route, setRoute] = useState(() => routeFromHash(window.location.hash));
+  useEffect(() => {
+    const changed = () => setRoute(routeFromHash(window.location.hash));
+    window.addEventListener('hashchange', changed);
+    return () => window.removeEventListener('hashchange', changed);
+  }, []);
+  return route.page === 'admin' ? <AdminApp /> : <PublicPage selected={route.id} />;
+}
 createRoot(document.getElementById('root')!).render(<App />);

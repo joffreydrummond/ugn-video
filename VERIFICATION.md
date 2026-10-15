@@ -55,3 +55,12 @@ No untested platform is claimed supported by observation.
 - Browser automation was attempted but no Chromium executable is installed in this preparation environment; no rendered UI/browser integration claim is made.
 - Live Docker/S3/Redis tests for Stop/Restart, sequential multi-file upload, pause/refresh/reselection and cancellation: pending locally.
 - Joffrey reported the MinIO stack and API healthy after adding infra/package.json and building MinIO locally. Storage recreation, successful worker-crash recovery and completed-media playback still need explicit result recording.
+
+## Public playback checkpoint
+
+- Backend/worker/frontend TypeScript checks: passed.
+- Full cross-platform test command npm test: 50 tests, passed (38 existing plus 4 public serialization and 8 playback-model checks).
+- Vite production build: passed with the existing large-bundle warning.
+- Public views do not mount the admin authentication flow; public metadata requests omit credentials. This is implementation review, not a live browser/network observation.
+- No Chromium executable or Docker engine is available in the preparation environment. Public no-login browsing, quality changes, native/media playback, keyboard/screen-reader behavior and device/network transitions remain pending local verification.
+- Unit checks using a 10-hour duration validate position arithmetic only; they are not a 10-hour processing or streaming test.

@@ -10,6 +10,7 @@ import cookieParser from 'cookie-parser';
 import { timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import type { Request, Response } from 'express';
+import { playbackMetadata, catalogMetadata } from './playback';
 import { retryVideo, deleteVideo } from './video-management';
 import { stopProcessing } from './processing-control';
 import { withVideoLock } from './video-lock';
@@ -63,9 +64,12 @@ class Api {
   logout(@Res({ passthrough: true }) res: Response) { res.clearCookie('session', cookieOptions); return { ok: true }; }
 
   @Get('videos')
-  list() { return db.video.findMany({ where: { status: 'READY' }, orderBy: { createdAt: 'desc' }, select: {
-    id: true, title: true, description: true, duration: true, status: true,
-  } }); }
+  async list() {
+    const videos = await db.video.findMany({ where: { status: 'READY' }, orderBy: { createdAt: 'desc' }, select: {
+      id: true, title: true, description: true, duration: true, status: true, createdAt: true,
+    } });
+    return videos.map(video => catalogMetadata(video, process.env.S3_PUBLIC_URL!));
+  }
   @Get('admin/videos')
   async all(@Req() req: Request) { await admin(req); return db.video.findMany({ orderBy: { createdAt: 'desc' } }); }
 
@@ -80,13 +84,7 @@ class Api {
   @Get('videos/:id/playback')
   async playback(@Param('id') id: string) {
     const video = await db.video.findUnique({ where: { id } });
-    if (!video) return { status: 'NOT_FOUND' };
-    return {
-      id: video.id, title: video.title, description: video.description, status: video.status, duration: video.duration,
-      manifestUrl: video.status === 'READY' ? `${process.env.S3_PUBLIC_URL}/videos/${id}/master.m3u8` : null,
-      poster: video.status === 'READY' ? `${process.env.S3_PUBLIC_URL}/videos/${id}/poster.jpg` : null,
-      renditions: video.status === 'READY' ? [1080, 720, 480] : [],
-    };
+    return playbackMetadata(video, process.env.S3_PUBLIC_URL!);
   }
   @Post('uploads')
   async create(@Req() req: Request, @Body() body: any) {

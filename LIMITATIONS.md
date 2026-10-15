@@ -14,7 +14,7 @@ The updated Docker/MinIO stack has not run in the preparation environment (Docke
 
 ## Remaining assessment work
 
-- Public no-login catalog/page; manual quality selection; complete graceful playback states.
+- Public catalog, shareable session routes and manual quality selection are implemented. Verify native/hls.js switching, public error states and accessibility in actual browsers/devices.
 - Optional custom thumbnail; shared client/server zod form validation and media-container allowlist. Description fields and basic length/size/extension checks are included.
 - Required frontend libraries/theme and meaningful shared contracts consumption.
 - Verify actual rendition bandwidth/resolution, no unnecessary upscaling, adaptive switching and segment alignment.
@@ -43,3 +43,7 @@ The updated Docker/MinIO stack has not run in the preparation environment (Docke
 - Rate limiting, account-backed admin credentials, production migrations, CDN/private playback and stronger operational controls remain production work.
 
 Do not commit videos, .env, signed URLs or the confidential assessment PDF.
+
+## Public playback update
+
+The public page, shared player and typed playback/catalog payloads are implemented and unit checked. Existing numeric rendition heights remain compatible; sources adds explicit quality URLs. Browser/native playback still needs actual observation. The API host can be configured with VITE_API_URL; unchanged localhost media/origin settings are not phone-ready.

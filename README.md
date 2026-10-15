@@ -1,5 +1,7 @@
 # UGN Video
 
+> **Public viewing:** Open http://localhost:5173/. Uploads and management are at http://localhost:5173/#/admin. See [PUBLIC-PLAYBACK-UPDATE.md](PUBLIC-PLAYBACK-UPDATE.md) for quality selection and verification.
+
 **Upload large videos. Follow processing. Stream your sessions.**
 
 A local video publishing prototype for Underground Nights, built with React, NestJS, PostgreSQL, BullMQ and S3-compatible storage.
@@ -249,7 +251,7 @@ Base URL for the local prototype: `http://localhost:3000`.
 | GET | `/videos` | Public | List READY video metadata |
 | GET | `/videos/:id/playback` | Public | Return status, manifest URL, poster, duration and renditions |
 
-The public endpoints exist, but a separate public browsing/viewing page is not implemented yet. The current frontend's Sessions list is behind admin sign-in. Retry/Delete endpoints are included and require admin authentication.
+The public home page lists READY sessions without authentication. Shareable links use #/watch/<id>. The studio at #/admin requires admin sign-in. Retry/Delete/Stop endpoints remain admin-only. Both views use a shared player with native-HLS/hls.js selection, manual quality controls and per-device resume.
 
 Playback metadata can be consumed by native clients, but native playback has not yet been verified. The local manifest URLs use localhost, which points at the requesting device; phone/native testing requires reachable URLs first.
 
@@ -382,7 +384,7 @@ Keep implementation, automated checks and real-device observations separate. Upd
 | Processing stage, percentage, ETA | Reported working |
 | Upload form reset / Close player | Reported working |
 | Session posters, duration and dates | Reported working |
-| Automated management and recovery tests | Thirty-eight tests (mostly dependency-mocked, plus a real child-process abort test) passed in preparation environment; original eight also passed on Joffrey's machine |
+| Automated management and recovery tests | Fifty tests (mostly dependency-mocked, plus a real child-process abort test) passed in preparation environment; original eight also passed on Joffrey's machine |
 | Retry/delete live Docker/storage behavior | Joffrey verified deletion and manual retry scheduling with an invalid file on the earlier LocalStack stack; successful transient-failure recovery still pending |
 | 10 GB+ upload and resume | Pending |
 | 10-hour video processing, startup and seeking | Pending |
@@ -547,7 +549,8 @@ Prioritize required behavior over additional visual polish:
 - [ ] Repeat core checks after the MinIO transition; prove successful recovery of a valid video.
 - [x] Implement automatic abandoned-upload cleanup and durable storage configuration.
 - [ ] Verify expiration cleanup, storage recreation and worker crash recovery on the updated stack.
-- [ ] Add the public READY-video viewer and manual quality selection.
+- [x] Add the public READY-video viewer and manual quality selection.
+- [ ] Verify quality switching, public viewing and native/mobile playback on actual devices.
 - [x] Implement upload/queue reconciliation and worker disk/ownership guards.
 - [ ] Finish media validation and validate resource guards under load.
 - [ ] Complete required stack conventions: Tailwind/theme/fonts, form validation libraries, notifications/icons/motion and shared contracts.
@@ -571,3 +574,7 @@ For each feature commit:
 ## AI assistance disclosure
 
 Joffrey Drummond directed requirements and tested the application locally. ChatGPT assisted with the initial scaffold, implementation changes, troubleshooting, automated tests and documentation. Preparation-environment checks and Joffrey's runtime observations are identified separately above. AI-generated code must be reviewed, understood and independently verified; the candidate must be able to explain and modify the implementation during review.
+
+### Public playback checkpoint
+
+Public catalog and the shared quality-selecting player are implemented; live browser/device verification is pending. The API now includes explicit rendition URLs via sources while preserving the numeric renditions list. Run all tests with `npm.cmd test` on Windows or `npm test` elsewhere. Public routes do not check admin authentication; upload/history controls stay at #/admin.

@@ -1,0 +1,24 @@
+generator client {
+ provider = "prisma-client-js"
+}
+datasource db {
+ provider = "postgresql"
+ url = env("DATABASE_URL")
+}
+model Video {
+ id String @id @default(uuid())
+ title String
+ description String @default("")
+ filename String
+ size Float
+ uploadId String?
+ status String @default("UPLOADING")
+ progress Int @default(0)
+ duration Float?
+ error String?
+ createdAt DateTime @default(now())
+ processingStage String?
+ estimatedCompletionAt DateTime?
+ processingHeartbeatAt DateTime?
+ updatedAt DateTime @updatedAt
+}

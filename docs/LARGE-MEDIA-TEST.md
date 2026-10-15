@@ -1,7 +1,8 @@
 # Large-media test and evidence
 
-Pending at document preparation. Do not mark passed until measured. The candidate
-has a reported 11.2 GB DJI MP4; exact bytes and duration are not yet captured.
+Completed baseline: 12,083,152,331-byte DJI MP4, 1340.714667 seconds.
+Upload/resume/processing and desktop/phone playback passed; see ../VERIFICATION.md.
+The procedure below is retained for reproducibility, not a request to repeat the test.
 An 11.2 GB short clip does not establish ten-hour startup/late-seek behavior.
 Do not compress this assessment input: retain a true >=10 GB browser upload test.
 
@@ -97,21 +98,21 @@ With a shorter source, record its actual late-seek point without claiming ten-ho
 coverage. A synthetic long sample can be separate, clearly labeled evidence; avoid
 starting an expensive ten-hour encode before estimating resources/deadline.
 
-## Results template
+## Recorded results
 
 | Metric | Actual result |
 | --- | --- |
-| Commit tested | Pending |
-| File name / exact bytes | Pending |
-| Duration / dimensions / fps / codecs | Pending |
-| Browser / OS / machine | Pending |
-| Docker disk and host free space before | Pending |
-| Upload / resume points / confirmed part reuse | Pending |
-| API versus storage request evidence | Pending |
-| Session ID / stored original size | Pending |
-| Processing wall time / retry count | Pending |
-| Peak observed worker CPU / memory / scratch | Pending |
-| READY / output duration / three qualities | Pending |
-| Cold first-frame measurements | Pending |
-| Actual duration and late-seek measurements | Pending |
-| Failures / limitations | Pending |
+| Commit tested | Test began from 6a0cba8; later presets/UI changes were checked separately |
+| File name / exact bytes | DJI_20261011132443_0045_D.MP4 / 12083152331 |
+| Duration / dimensions / fps / codecs | 1340.714667 s / 2688x1512 / 119.88 fps / HEVC + AAC |
+| Browser / OS / machine | Windows Docker Desktop; desktop browsers and Samsung S23 Ultra Chrome; exact versions not captured |
+| Docker disk and host free space before | /work: 928 GiB available in virtual filesystem; Windows C: 109.8 GiB, G: 489.2 GiB. Virtual capacity is not physical host free space |
+| Upload / resume points / confirmed part reuse | Closed-tab resume passed; precise pause percentage not captured |
+| API versus storage request evidence | Direct multipart path implemented and exercised; no separate retained network trace for this large run |
+| Session ID / stored original size | 7427992d-765c-4aca-8e33-8977b2dc57a2 / 12083152331 |
+| Processing wall time / retry count | About four hours upload-start to READY report; isolated processing duration/retry count not measured |
+| Peak observed worker CPU / memory / scratch | Sampled max 198.66% / 856.7 MiB / 12 GiB rounded; not continuous peaks |
+| READY / output duration / three qualities | READY; display 22:20; all three qualities passed by report |
+| Cold first-frame measurements | Not timed |
+| Actual duration and late-seek measurements | Seek near 20:00 passed; latency not timed; no ten-hour test |
+| Failures / limitations | One old-video Auto stall; newer 1080p playback worked; cause unconfirmed |

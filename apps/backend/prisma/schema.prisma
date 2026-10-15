@@ -11,6 +11,7 @@ model Video {
  description String @default("")
  filename String
  size Float
+ encodingPreset String @default("original")
  uploadId String?
  status String @default("UPLOADING")
  progress Int @default(0)

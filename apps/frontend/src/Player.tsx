@@ -1,3 +1,4 @@
+import { spokenDuration } from './session-presentation';
 import React, { useEffect, useRef, useState } from 'react';
 import Hls from 'hls.js';
 import { publicApi } from './api';
@@ -167,7 +168,7 @@ export function Player({ id, onClose }: { id: string; onClose: () => void }) {
     {info && !ready && <p role="status">{stateMessage(info.status)}</p>}
     {ready && <>
       <video ref={ref} crossOrigin="anonymous" controls playsInline preload="metadata" poster={info.poster || undefined} tabIndex={0}
-        aria-label={`Video: ${info.title || 'session'}`} aria-describedby="player-keyboard-help"
+        aria-label={`Video: ${info.title || 'session'}`} aria-describedby="player-duration player-keyboard-help"
         onLoadedMetadata={metadataLoaded} onCanPlay={() => setLoading(false)} onPlaying={() => setLoading(false)}
         onWaiting={() => setLoading(true)} onTimeUpdate={() => savePosition()} onPause={() => savePosition(true)}
         onEnded={() => { try { localStorage.removeItem(`watch:${id}`); } catch { /* Optional. */ } }}
@@ -176,12 +177,12 @@ export function Player({ id, onClose }: { id: string; onClose: () => void }) {
         }} />
       <div className="player-toolbar">
         <label>Playback quality
-          <select value={quality} onChange={event => changeQuality(event.target.value)} disabled={!choices.length}>
+          <select aria-describedby={info.duration != null ? "player-duration" : undefined} value={quality} onChange={event => changeQuality(event.target.value)} disabled={!choices.length}>
             <option value="auto">Auto</option>
             {choices.map(choice => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
           </select>
         </label>
-        {info.duration != null && <p>Duration: {formatDuration(info.duration)}</p>}
+        {info.duration != null && <p id="player-duration" tabIndex={0} role="group" aria-label={spokenDuration(info.duration)}><span aria-hidden="true">Duration: {formatDuration(info.duration)}</span><span className="duration-accessible">{spokenDuration(info.duration)}</span></p>}
       </div>
       <p className="progress-note" role="status">{loading && !error ? 'Loading video… ' : ''}{qualityNote}</p>
       <p className="progress-note" id="player-keyboard-help">Player keyboard: Space or K to play/pause · Left/Right to seek 10 seconds · M to mute. Tab reaches quality and player controls.</p>

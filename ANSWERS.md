@@ -159,17 +159,24 @@ from the original, and the three output heights are fixed even when that means
 upscaling a small source. Custom-thumbnail uploads, captions and paid access are
 outside this version.
 
-The large-file upload and closed-tab resume have passed; processing and playback
-of that file are still being measured. Its duration is about 22 minutes, so a true
+The 12.08 GB upload, closed-tab resume, processing and desktop/phone playback
+have passed. Its duration is about 22 minutes, so a true
 ten-hour startup and late-seek test remains separate work. With another week, I
 would finish those measurements and broaden device testing to Safari, in-app
-browsers and a screen reader. I would then add encoding checkpoints and stronger
+browsers and additional screen readers. Windows Narrator has now been exercised
+on the tested controls and session metadata; that does not establish every
+screen-reader/browser combination. I would then add encoding checkpoints and stronger
 per-attempt output isolation so a failed long job loses less work.
 
-For the DJ-set workflow, I would add presets that account for the source resolution
-and frame rate. The current DJI test is nearly 120 fps; retaining that frame rate
-adds encoding work that may not be needed for a streaming set. I would compare
-30/60 fps outputs, preserve audio quality and avoid upscaling. An explicit policy
+For the DJ-set workflow, the final update adds Standard (up to 30 fps), Smooth motion
+(up to 60 fps) and Original frame rate presets. I checked both presets with a short high-frame-rate clip from the DJI recording.
+FFprobe reported 30000/1001 fps for Standard and 60000/1001 fps for Smooth in the
+encoded 1080p segments, and both played with audio and seeking. A further improvement would adapt the resolution
+ladder to the source. The current DJI test is nearly 120 fps; retaining that frame rate
+adds encoding work that may not be needed for a streaming set. The presets preserve lower frame rates and leave the audio settings unchanged.
+I would next benchmark the processing-time and quality tradeoff across several
+representative sets rather than promise a fixed speed improvement from one sample.
+I would also avoid upscaling sources that are smaller than an output rendition. An explicit policy
 for retaining or deleting originals would help control storage. Compression before
 upload would require a separate local/browser processing step; server compression
 cannot reduce bytes that have already been uploaded.

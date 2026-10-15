@@ -1,3 +1,4 @@
+import { renditionFilter } from './encoding-preset';
 import { measurePlaylist, masterPlaylist, type Rendition } from './hls-metadata';
 import { supportedContainer } from '../../../packages/contracts/src/validation';
 import 'reflect-metadata';
@@ -120,6 +121,10 @@ const worker = new Worker('videos', async (job, lockToken) => {
     const duration = Number(probe.format?.duration);
     if (!Number.isFinite(duration) || duration <= 0) throw new Error('Invalid media duration.');
     await db.video.updateMany({ where: { id, status: 'PROCESSING', processingToken }, data: { duration } });
+    const sourceVideo = probe.streams.find((stream: any) => stream.codec_type === 'video');
+    const sourceRate = sourceVideo.avg_frame_rate !== '0/0' ? sourceVideo.avg_frame_rate : sourceVideo.r_frame_rate;
+    const encodingPreset = video.encodingPreset ?? 'original';
+    console.log(`[${id}] Processing preset: ${encodingPreset}; source fps: ${sourceRate}`);
     const heights = [1080, 720, 480];
     const renditions: Rendition[] = [];
     let previousSpeed: number | null = null;
@@ -138,7 +143,7 @@ const worker = new Worker('videos', async (job, lockToken) => {
       await encode('ffmpeg', [
         '-nostdin', '-hide_banner', '-loglevel', 'error', '-progress', 'pipe:1', '-nostats',
         '-y', '-i', `${directory}/input`, '-map', '0:v:0', '-map', '0:a:0?',
-        '-vf', `scale=-2:${height}`, '-c:v', 'libx264', '-preset', 'veryfast',
+        '-vf', renditionFilter(encodingPreset, sourceRate, height), '-c:v', 'libx264', '-preset', 'veryfast',
         '-maxrate', String([6000000, 3000000, 1500000][index]), '-bufsize', String([12000000, 6000000, 3000000][index]),
         '-filter_threads', '1', '-threads', '2', '-pix_fmt', 'yuv420p', '-crf', '23',
         '-force_key_frames', 'expr:gte(t,n_forced*6)', '-c:a', 'aac', '-b:a', '128k',

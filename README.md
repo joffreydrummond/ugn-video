@@ -2,15 +2,19 @@
 
 A video publishing prototype with resumable direct-to-storage uploads, background FFmpeg processing and public adaptive HLS playback.
 
-**Status:** short-video upload/playback, recovery/cleanup, batch controls and auth checks have passed in the stated scope. A separate clean checkout at **5029615** passed startup and test-video upload/playback. Desktop Chrome/Edge/Firefox, Samsung S23 Ultra Chrome and VLC were exercised. **10 GB+ and true ten-hour measurements, Apple/webview devices and AWS runtime remain unverified.** See [VERIFICATION.md](VERIFICATION.md) and [LIMITATIONS.md](LIMITATIONS.md).
+**Verified baseline:** a 12.08 GB camera recording uploaded, resumed after tab closure, processed into three HLS qualities and played on desktop and Samsung Chrome. Storage byte size matched exactly. Recovery, cleanup, batch controls, auth and a fresh-checkout short-video flow were also exercised. **Ten-hour media, Apple/webview platforms and AWS runtime remain unverified.** Standard and Smooth presets were verified against encoded output, catalog controls passed browser checks, and Windows Narrator announced the tested session metadata and controls. The final local checks passed, including 80 automated tests. See [VERIFICATION.md](VERIFICATION.md) and [LIMITATIONS.md](LIMITATIONS.md).
 
-Design: [ARCHITECTURE.md](ARCHITECTURE.md) · Written responses: [ANSWERS.md](ANSWERS.md) · [Cost assumptions](COST-ESTIMATE.md) · [Completion checklist](UGN-COMPLETION-CHECKLIST.md) · [Large-media procedure](LARGE-MEDIA-TEST.md).
+Design: [ARCHITECTURE.md](ARCHITECTURE.md) · Written responses: [ANSWERS.md](ANSWERS.md) · [Cost assumptions](COST-ESTIMATE.md) · [Completion checklist](UGN-COMPLETION-CHECKLIST.md) · [Large-media procedure](docs/LARGE-MEDIA-TEST.md).
 
 ## Run locally
 
 Prerequisites: Git, Docker Desktop using Linux containers, Docker Compose, network access for first build, and enough disk space for originals plus worker copies and three renditions. Host Node.js 22 is needed only for local development/checks.
 
-1. Clone the repository and open its root.
+1. Clone the repository and open its root:
+   ```powershell
+   git clone https://github.com/joffreydrummond/ugn-video.git
+   Set-Location ugn-video
+   ```
 2. Create configuration (PowerShell):
    ```powershell
    Copy-Item .env.example .env
@@ -28,11 +32,13 @@ MinIO builds from pinned source using infra/Minio.Dockerfile because registry pu
 - API health: http://localhost:3000/health
 - S3 endpoint: http://localhost:9000 (not a management dashboard)
 
+**A fresh installation starts with an empty library.** My test videos and Docker volumes are not included in Git. Upload a short video from Admin studio to exercise your own instance.
+
 Keep .env untracked. .env.example contains development placeholders only. Never commit media or confidential assessment material.
 
 ## Upload and manage sessions
 
-Open admin, sign in, choose one or multiple supported files, edit each title/optional description, then click **Start / Resume queue**. Titles allow 1–200 characters, descriptions up to 5,000. Declared file ceiling is 20 GiB; large-media support remains unproven by a real 10 GB test.
+Open admin, sign in, choose one or multiple supported files, edit each title/optional description, then click **Start / Resume queue**. Titles allow 1–200 characters, descriptions up to 5,000. Declared file ceiling is 20 GiB; the tested input was 12,083,152,331 bytes.
 
 Files transfer sequentially using 64 MiB multipart parts directly to S3-compatible storage. The API signs/orchestrates requests; it does not proxy video bytes. Each completed file enters BullMQ processing while the next browser file can upload.
 
@@ -51,11 +57,11 @@ Expired uploads currently appear as Cancelled in browser history; distinguishing
 
 Lifecycle: UPLOADING → UPLOADED → PROCESSING → READY / RETRYING / FAILED, with STOPPING / STOPPED and DELETING management states. UI polling shows stage/progress without manual refresh.
 
-FFprobe verifies actual media; FFmpeg sequentially creates fixed 1080p, 720p and 480p H.264/AAC HLS, poster and duration. Estimated completion changes with measured speed; it is not a deadline. Worker concurrency is one, with Compose CPU/memory limits and application scratch/free-space guards (not hard disk quotas).
+FFprobe verifies actual media; FFmpeg sequentially creates fixed 1080p, 720p and 480p H.264/AAC HLS, poster and duration. New uploads offer Standard (up to 30 fps), Smooth motion (up to 60 fps, default) and Original frame rate. Lower-frame-rate inputs are preserved; common NTSC rates retain their 29.97/59.94 relationships. This is server-side processing after upload, not pre-upload compression. The selection is fixed once the upload session is created and is reused on retries; existing database rows retain Original behavior. Estimated completion changes with measured speed; it is not a deadline. Worker concurrency is one, with Compose CPU/memory limits and application scratch/free-space guards (not hard disk quotas).
 
 A killed worker's lock expires before stalled-job recovery. The tested job automatically restarted and reached READY. The current 120-second lock can mean roughly 2–3 minutes before recovery. Crash/retry restarts encoding from the original; no encoding checkpoints.
 
-Public pages list READY sessions only and never require admin login. Native HLS is preferred when advertised, otherwise hls.js is used. Auto/manual quality, shareable links, useful unavailable/network states, and per-browser watch resume are implemented. Space is handled by native controls; K toggles playback, arrows seek and M mutes. Tab reaches controls.
+Public pages list READY sessions only and never require admin login. The catalog supports title/description search, newest/oldest/title sorting, library counts and clear no-match feedback. Admin cards show the saved processing preset. Native HLS is preferred when advertised, otherwise hls.js is used. Auto/manual quality, shareable links, useful unavailable/network states, and per-browser watch resume are implemented. Space is handled by native controls; K toggles playback, arrows seek and M mutes. Tab reaches controls.
 
 ### Public API
 
@@ -94,7 +100,7 @@ npm.cmd exec -w @ugn/frontend -- vite build
 
 Prisma generation on the host supplies editor types; Docker generation does not update host node_modules. Restart VS Code's TypeScript server if needed. Elsewhere use npm/npx without .cmd.
 
-The tests include queue transfer/reconciliation, management/recovery/processing controls, public serialization, playback helpers and subprocess abort behavior. 72 passed in the preparation environment; see verification record for local versus mocked evidence.
+The tests include queue transfer/reconciliation, management/recovery/processing controls, public serialization, playback helpers and subprocess abort behavior. 80 tests passed in the source workspace and Joffrey confirmed the final Windows checks and production build passed. See the verification record for automated versus runtime evidence.
 
 After source changes rebuild affected services. Save a reviewed Git checkpoint before destructive tests. Avoid staging .env, media, node_modules, archives, volumes and generated output.
 
@@ -111,15 +117,15 @@ docker compose top worker
 
 For stale UI rebuild frontend and refresh. A restored upload needs original-file reselection. For phone failures check reachable frontend/API/storage and matching CORS. For presigned PUT failures inspect response and retain requestChecksumCalculation WHEN_REQUIRED; do not rewrite signed URLs.
 
-**Multipart inventory:** the live MinIO instance omitted uploads when a Prefix filter was supplied. The inspector and orphan sweeper now list without Prefix and locally filter originals/ keys; post-fix live listing passed. Captured-ID cancellation and tracked-expiry checks passed at the evidence level recorded in VERIFICATION.md. Inventory alone is not proof of removal. See [STORAGE-VERIFICATION.md](STORAGE-VERIFICATION.md).
+**Multipart inventory:** the live MinIO instance omitted uploads when a Prefix filter was supplied. The inspector and orphan sweeper now list without Prefix and locally filter originals/ keys; post-fix live listing passed. Captured-ID cancellation and tracked-expiry checks passed at the evidence level recorded in VERIFICATION.md. Inventory alone is not proof of removal. See [STORAGE-VERIFICATION.md](docs/STORAGE-VERIFICATION.md).
 
-## Remaining assessment work
+## Verification boundaries
 
-The main remaining evidence is real 10 GB+/ten-hour media performance. Review the written answers, final checks and demo/submission checklist. Unsupported/unavailable test platforms stay Not tested. Optional custom thumbnails are not implemented. The development bundle and dependency-audit findings remain documented limitations.
+The large-file end-to-end test passed; actual ten-hour duration/startup/late-seek evidence remains unverified. The written answers explain the design and tradeoffs; the [submission checklist](docs/SUBMISSION.md) covers final delivery. Unsupported/unavailable test platforms stay Not tested. Optional custom thumbnails are not implemented. The development bundle and dependency-audit findings remain documented limitations.
 
 ## AI assistance
 
-Joffrey directed requirements and performed the reported local tests. ChatGPT assisted with implementation, debugging, automated checks and documentation. Preparation checks are separated from actual device/runtime observations. The candidate must review, understand and be able to explain/modify all code.
+I used ChatGPT to help with implementation, debugging, test development and documentation. I directed the requirements, customized and refined the project, reviewed the behavior, and performed the local browser, phone, recovery and storage checks recorded in VERIFICATION.md. The project and its tradeoffs reflect my decisions; the verification record distinguishes automated checks from results observed in the running application.
 
 ## Storage, validation and media settings
 
@@ -136,6 +142,19 @@ settings must permit it. Real AWS remains untested. CORS does not grant object a
 New masters include measured bandwidth and encoded dimensions. Existing playlists
 are unchanged. Three heights may upscale small inputs. Generated versions are not
 guaranteed to total less storage than the original; originals are currently retained.
-Post-upload compression cannot shrink the initial upload. Optional local compression,
+Post-upload optimization cannot shrink the initial upload. Standard/Smooth motion presets cap output frame rate; original audio encoding settings and retained source are unchanged. Optional local compression,
 source-aware presets and an explicit retention policy are future work, not required
 before the current large-file assessment test.
+
+## Making changes
+
+Start with the source map in [ARCHITECTURE.md](ARCHITECTURE.md). Shared request rules live
+in packages/contracts; change those alongside the API and relevant tests. The worker
+owns encoding behavior, while the browser owns file selection and upload progress.
+After a schema change, regenerate Prisma and rebuild backend/worker. For a frontend
+change, rebuild frontend and refresh the browser. Re-run the checks above before committing.
+
+The preset field defaults existing database records to Original frame rate. New upload
+forms default to Smooth motion. Changing source code does not re-encode existing videos.
+For the one-time upgrade procedure and reproducible preset checks, see
+[docs/FINAL-UPDATE.md](docs/FINAL-UPDATE.md).

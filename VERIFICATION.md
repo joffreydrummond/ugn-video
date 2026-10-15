@@ -4,6 +4,34 @@ Updated October 15, 2026. Runtime results are from Joffrey on Windows Docker Des
 Preparation checks run separately in the supplied source workspace. User confirmation
 is distinguished from pasted output. Results do not establish every browser or scale.
 
+## Completed large-file test
+
+- Source: DJI_20261011132443_0045_D.MP4, **12,083,152,331 bytes** (12.08 GB / 11.25 GiB).
+- FFprobe duration **1340.714667 seconds** (22:20.7), HEVC 2688x1512 at
+  120000/1001 fps (~119.88), AAC audio. No ten-hour claim is made from this file.
+- Upload start recorded **2026-10-15 06:53:48.825 -07:00**. User confirmed pause,
+  closed-tab original reselection and successful resume without restarting at zero.
+- Session **7427992d-765c-4aca-8e33-8977b2dc57a2** completed thumbnail/publishing and
+  reached READY. Completion was reported around **10:48–10:49 Phoenix time**; exact
+  READY transition timestamp was not captured. Roughly four hours elapsed from upload
+  start to the completion report; this is not an isolated encoding benchmark.
+- Storage snapshot at **17:52:51 UTC**: READY, originalExists true,
+  **originalBytes 12083152331**, generatedFileCount **677** (676 files plus master).
+- Desktop: 1080p/720p/480p, audio sync, seeking near 20:00 and refresh/watch resume
+  confirmed. Samsung S23 Ultra Chrome playback of the same session confirmed.
+- Resource observations below are samples, not continuously measured peaks.
+
+| Phoenix time | Worker CPU | Worker memory / 2 GiB | Backend memory | Scratch | Windows C: free |
+| --- | --- | --- | --- | --- | --- |
+| Around 07:01 | 197.46% | 828.8 MiB | 127.7 MiB | 12 GiB rounded | Not captured in that sample |
+| 08:29 | 196.16% | 856.7 MiB | 127.2 MiB | 12 GiB rounded | 89 GiB |
+| 09:24 | 198.66% | 746.9 MiB | 126.3 MiB | 12 GiB rounded | 87.1 GiB |
+
+During encoding, one older video stalled briefly on Auto; manually selected 480p
+worked. API health returned HTTP 200 in 0.006847 seconds. Newer Step 2/3 videos played
+1080p without buffering. The older-video stall was not isolated to a confirmed cause;
+do not claim universally smooth concurrent playback or a verified fix.
+
 ## Runtime evidence
 
 | Check | Result and evidence |
@@ -36,6 +64,26 @@ is distinguished from pasted output. Results do not establish every browser or s
 | Keyboard/network retry | K/arrows/M/Tab and quality change passed; Space double-toggle fixed/retested; Offline then Try again continued playback |
 | Independent player | VLC master playback/audio/seek reported working; does not establish AVPlayer/ExoPlayer device results |
 
+## Final preset, catalog and accessibility checks
+
+- Standard: c3cd1a9a-981f-48be-a02f-c8af5180e3e7, READY, stored preset standard.
+  FFprobe of 1080-000000.ts: 1920x1080, avg_frame_rate 30000/1001 (~29.97 fps).
+- Smooth: fff348e8-cc8c-4ce1-a451-5f65b2dede2c, READY, stored preset smooth.
+  FFprobe of 1080-000000.ts: 1920x1080, avg_frame_rate 60000/1001 (~59.94 fps).
+- Both used a short high-frame-rate sample from the DJI recording. Playback,
+  audio and seeking passed by report. Existing large media remained Original.
+- Catalog search, clear/no-match handling, sorting and opening sessions passed by
+  report. Final browser/phone regression checks were confirmed passing.
+- Processing-quality help was changed to an overlay that does not move the form;
+  clicking outside dismisses it. User confirmed the behavior and final layout.
+- Public cards display duration below the title and above Added. Admin follows
+  the same order, with the saved preset tag below the date and Watch/Delete actions
+  grouped together. Focusable metadata announces the title and details. The final
+  admin announcement also includes status and Ready to watch. Joffrey confirmed
+  Narrator and layout worked after these changes.
+- These are manual observations in Windows Narrator/Chrome, not an automated WCAG
+  conformance result. Other assistive-technology combinations remain untested.
+
 ## Platforms actually exercised
 
 | Platform | Scope | Status |
@@ -49,11 +97,11 @@ is distinguished from pasted output. Results do not establish every browser or s
 | Samsung Internet | Separate from Chrome on Samsung | Not tested |
 | Instagram/Facebook/TikTok webviews | Actual in-app links | Not tested |
 | AVPlayer/ExoPlayer apps | Actual native app | Not directly tested |
-| Screen reader | Spoken labels/focus/announcements | Not tested; keyboard checks alone are insufficient |
+| Windows Narrator / desktop Chrome | Search and tested player controls; public/admin session title, readable duration/date, preset and READY status via focusable metadata | Passed by Joffrey after fixes; exact versions not recorded. This is a focused manual check, not a full accessibility audit |
 
 ## Automated/preparation checks
 
-72 tests and all workspace TypeScript checks pass after the inventory patch.
+The final version passes **80 automated tests**, workspace TypeScript checks and the frontend production build. Joffrey confirmed the final Windows checks passed on October 15. Source-workspace checks also passed. Earlier 72/79-test counts describe prior checkpoints, not the final suite.
 Coverage includes upload reconciliation, shared validation boundaries, storage
 snapshot verification/pagination, processing controls, recovery/idempotency,
 public metadata/player models, LAN upload-key fallback and HLS metadata. Most
@@ -61,19 +109,24 @@ external dependencies are mocked. A real subprocess abort test verifies process
 exit; a local FFmpeg/FFprobe smoke check produced valid measured HLS metadata.
 Vite production build passed; a roughly 1.09 MB main bundle warning remains.
 Windows checks were reported passing before commit 5029615; local test output was
-not retained here as a machine-generated artifact. npm reported 10 vulnerabilities
-(2 moderate, 8 high); dependency findings have not been triaged or claimed fixed.
+not retained here as a machine-generated artifact. The full install audit reported 10 findings (2 moderate, 8 high). The later
+`npm audit --omit=dev` reported 3 high findings through one chain:
+prisma -> @prisma/config -> deepmerge-ts (<8). Advisory GHSA-ggr8-5vv4-36mx requires
+recursive object graphs; ordinary JSON alone does not create that condition. No
+application upload path directly uses these merge functions in source review.
+This suggests limited demonstrated request-path exposure, not a security guarantee.
+The finding remains unresolved; the proposed forced Prisma downgrade was not applied.
+See https://github.com/advisories/GHSA-ggr8-5vv4-36mx.
 
 ## Still unverified
 
-- Real 10 GB+ browser upload/resume and processing/resource measurements.
 - Actual ten-hour output first-frame/late-seek timing, including 07:42:10.
 - Disk/full-memory guard behavior under load, multiworker capacity and HDR handling.
 - Untracked-orphan injection/expiry, live interrupted deletion and exhausted-crash retry budget.
 - Active-job concurrent request races; wrong-content same-name/size resume identity.
 - AWS deployment/IAM/public-access/CORS readback on an actual AWS account.
-- Unavailable devices/webviews/screen reader and exact versions above.
+- Unavailable devices/webviews, additional screen-reader combinations and exact versions above.
 - Full secret-history/dependency audit before submission.
 
-See LARGE-MEDIA-TEST.md for the remaining measurements. Do not commit originals,
+See docs/LARGE-MEDIA-TEST.md for the remaining measurements. Do not commit originals,
 .env, captured presigned URLs or the confidential assessment PDF.

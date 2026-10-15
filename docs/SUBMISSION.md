@@ -1,6 +1,9 @@
 # Demo and submission checklist
 
-## Suggested 5–10 minute recording
+## Optional live demo or recording
+
+A recording is optional. The same sequence works for a live demo; existing videos
+are in the local instance only, not included when a reviewer clones the repository.
 
 1. State the goal and show public playback without login; use a recognizable DJ set.
 2. Seek, switch quality and show phone playback. Name actual devices tested.
@@ -16,7 +19,7 @@ pages. Use public links and review footage before sharing.
 
 ## Before the final email
 
-- Apply/review all docs; populate real results in LARGE-MEDIA-TEST.md/VERIFICATION.md.
+- Apply/review all docs; review the recorded results in docs/LARGE-MEDIA-TEST.md and VERIFICATION.md.
 - Review package/dependency audit findings; do not blindly apply forced upgrades.
 - Run TypeScript, tests, frontend build and inspect Git diff/ignored files.
 - Check tracked files and history for secrets, media, confidential PDF and generated

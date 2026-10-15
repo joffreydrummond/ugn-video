@@ -1,8 +1,10 @@
+import type { EncodingPreset } from '../../../packages/contracts/src/index';
 import { PART_SIZE, MAX_BYTES } from '../../../packages/contracts/src/index';
 export { PART_SIZE, MAX_BYTES };
 export type UploadState = 'pending' | 'uploading' | 'paused' | 'error' | 'uploaded' | 'cancelled';
 export type UploadEntry = {
   key: string; filename: string; size: number; modified: number; title: string; description: string;
+  encodingPreset?: EncodingPreset;
   state: UploadState; serverId?: string; confirmedBytes: number; percent: number; note: string;
 };
 export const QUEUE_KEY = 'ugn:upload-queue:v1';
@@ -15,7 +17,7 @@ export function restoreQueue(text: string | null): UploadEntry[] {
   return parsed.filter(row => row && typeof row.key === 'string' && typeof row.filename === 'string'
     && Number.isFinite(row.size) && row.size > 0 && Number.isFinite(row.modified)
     && ['pending', 'uploading', 'paused', 'error', 'uploaded', 'cancelled'].includes(row.state))
-    .map(row => ({ ...row, state: row.state === 'uploading' ? 'paused' : row.state,
+    .map(row => ({ ...row, encodingPreset: ['standard', 'smooth', 'original'].includes(row.encodingPreset) ? row.encodingPreset : 'original', state: row.state === 'uploading' ? 'paused' : row.state,
       note: ['uploaded', 'cancelled'].includes(row.state) ? row.note : 'Select the original file to resume.' }));
 }
 export class TransferInterrupted extends Error {}
@@ -32,7 +34,7 @@ export async function transfer(entry: UploadEntry, file: File, hooks: Hooks) {
   let id = entry.serverId;
   if (!id) {
     const video = await hooks.api('uploads', { title: entry.title.trim() || file.name, description: entry.description,
-      filename: file.name, size: file.size });
+      filename: file.name, size: file.size, encodingPreset: entry.encodingPreset ?? 'original' });
     id = video.id;
     hooks.update({ serverId: id }); // persist before the first part request
   }

@@ -18,6 +18,39 @@ flowchart TD
   G -->|Playlists and selected segments| D
 ```
 
+## Where to start in the code
+
+| Location | Responsibility |
+| --- | --- |
+| apps/frontend/src/main.tsx | Admin sign-in, session list and management actions |
+| apps/frontend/src/BatchUploader.tsx and upload-queue.ts | Upload form, browser queue persistence and multipart transfer |
+| apps/frontend/src/UploadMetadataFields.tsx | Metadata validation UI, preset selection and help |
+| apps/frontend/src/PublicPage.tsx and session-presentation.ts | Public catalog, search/sort and readable session metadata |
+| apps/frontend/src/Player.tsx and playback-model.ts | HLS engine selection, quality, keyboard controls and watch resume |
+| apps/backend/src/main.ts | HTTP routes, authentication and upload orchestration |
+| apps/backend/src/recovery.ts | Recovery and maintenance coordination |
+| apps/backend/prisma/schema.prisma | Persistent Video model |
+| apps/worker/src/main.ts | Probe, encode, publish and update processing state |
+| apps/worker/src/encoding-preset.ts and hls-metadata.ts | Frame-rate policy and measured playlist metadata |
+| packages/contracts/src | Shared types, validation and origin rules |
+| infra | Container images, storage initialization, migration and inspection tools |
+| apps/*/tests and scripts/test.mjs | Automated checks and workspace test runner |
+
+To follow one upload, start in BatchUploader, then read the /uploads routes in the
+backend and the processing job in the worker. To change playback, start in Player
+and playback-model. Keep server validation authoritative even when a form performs
+the same check in the browser.
+
+## Local service boundaries
+
+The frontend is exposed on 5173, the API on 3000 and MinIO on 9000. Postgres and
+Redis communicate on the Compose network. Containers use http://minio:9000; browser
+upload and playback URLs must use a hostname reachable from the viewer's device.
+On a phone, localhost points at the phone, which is why LAN configuration changes
+the browser endpoint and public media URL without changing the internal endpoint.
+Named volumes hold database state, queue state, media and scratch files. A new
+checkout with new volumes starts empty; the repository contains no test recordings.
+
 ## Upload and persistence
 
 The API validates shared zod schemas, creates a Video row and multipart upload,
@@ -46,6 +79,7 @@ stored as an account-backed history table.
 | id | UUID primary key; object-key prefix and stable queue job ID |
 | title, description, filename | Validated metadata and original filename |
 | size | Declared integer bytes, represented as Float; 20 GiB ceiling is exactly representable |
+| encodingPreset | Saved Original, Standard or Smooth policy; immutable after upload session creation and reused on retry |
 | uploadId | Active multipart upload identifier; cleared after completion |
 | status, progress, duration, error | Lifecycle, encoding percentage, probed duration and bounded error detail |
 | processingToken | Attempt identity fencing stale worker database updates |
@@ -86,6 +120,11 @@ metadata supports cleanup after lock loss; finally blocks clean normal exits.
 FFprobe validates the actual container, video stream and finite positive duration.
 The worker produces three fixed heights: 1080, 720 and 480, preserving aspect ratio
 with even dimensions and yuv420p. Low-resolution inputs are currently upscaled.
+Standard caps output at 30 fps; Smooth caps it at 60 fps; Original preserves source
+frame rate. Lower source rates are not increased. Legacy rows default to Original
+and new forms default to Smooth. This work happens after upload, so it saves
+encoding work for high-frame-rate sources rather than reducing the original transfer.
+
 H.264 plus optional AAC stereo in MPEG-TS HLS favors broad browser/native support.
 Six-second target segments and forced keyframes balance request volume and seeking;
 frame timing can make actual segment durations vary. CRF 23 with maxrate/bufsize

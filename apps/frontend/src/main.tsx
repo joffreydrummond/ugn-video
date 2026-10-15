@@ -1,3 +1,4 @@
+import { presetLabel, spokenDuration } from './session-presentation';
 import '@fontsource/montserrat/latin-400.css';
 import '@fontsource/montserrat/latin-700.css';
 import '@fontsource/bebas-neue/latin-400.css';
@@ -8,7 +9,7 @@ import { createRoot } from 'react-dom/client';
 import './style.css';
 import { api, ApiError } from './api';
 import { BatchUploader } from './BatchUploader';
-import { Player, formatDuration } from './Player';
+import { Player } from './Player';
 import { PublicPage } from './PublicPage';
 import { routeFromHash } from './playback-model';
 
@@ -345,13 +346,15 @@ function AdminApp() {
                     </span>
                   </div>
 
-                  <div className="session-details">
-                    <span>{formatDuration(video.duration)}</span>
+                  <div className="session-details admin-session-metadata" tabIndex={0} role="group"
+                    aria-label={`${video.title}. Status: ${video.status.toLowerCase()}.${video.status === 'READY' ? ' Ready to watch.' : ''} ${spokenDuration(video.duration)}. Processing quality: ${presetLabel(video.encodingPreset)}.${uploadDate(video.createdAt) ? ` Uploaded ${new Date(video.createdAt).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}.` : ''}`}>
+                    <span>{spokenDuration(video.duration)}</span>
                     {uploadDate(video.createdAt) && (
                       <span>Uploaded <time dateTime={new Date(video.createdAt).toISOString()} title={new Date(video.createdAt).toLocaleString()}>
                         {new Date(video.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
                       </time></span>
                     )}
+                    <span className="preset-badge">{presetLabel(video.encodingPreset)}</span>
                   </div>
 
                   {video.status === 'PROCESSING' && (
@@ -390,9 +393,6 @@ function AdminApp() {
                   {video.status === 'READY' && (
                     <>
                       <p className="ready-message">Ready to watch.</p>
-                      <button onClick={() => watchSession(video.id)}>
-                        Watch session
-                      </button>
                     </>
                   )}
                   {['UPLOADED', 'PROCESSING', 'RETRYING'].includes(video.status) && (
@@ -402,6 +402,9 @@ function AdminApp() {
                   )}
                   {['READY', 'FAILED', 'STOPPED', 'DELETING'].includes(video.status) && (
                     <div className="actions" style={{ marginTop: 16 }}>
+                      {video.status === 'READY' && (
+                        <button type="button" onClick={() => watchSession(video.id)}>Watch session</button>
+                      )}
                       {['FAILED', 'STOPPED'].includes(video.status) && (
                         <button type="button" disabled={!!sessionAction} onClick={() => void manageSession(video, 'retry')}>
                           {sessionAction?.id === video.id && sessionAction?.kind === 'retry' ? 'Queuing…' : video.status === 'STOPPED' ? 'Restart processing' : 'Retry processing'}

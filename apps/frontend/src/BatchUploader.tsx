@@ -67,7 +67,7 @@ export function BatchUploader({ videos, onBusy, onAuthError }: {
   }
   function update(key: string, patch: Partial<UploadEntry>) {
     commit(entries.current.map(item => item.key === key ? { ...item, ...patch } : item),
-      'confirmedBytes' in patch || 'serverId' in patch || 'state' in patch || 'title' in patch || 'description' in patch);
+      'confirmedBytes' in patch || 'serverId' in patch || 'state' in patch || 'title' in patch || 'description' in patch || 'encodingPreset' in patch);
   }
   useEffect(() => {
     mounted.current = true;
@@ -99,7 +99,7 @@ export function BatchUploader({ videos, onBusy, onAuthError }: {
       const existing = next.find(item => unfinished(item) && sameFile(item, file));
       if (existing) { files.current.set(existing.key, file); existing.note = 'File matched. Click Start / Resume queue to continue from saved parts.'; continue; }
       const item: UploadEntry = { key: createUploadKey(), filename: file.name, size: file.size,
-        modified: file.lastModified, title: file.name.slice(0, 200), description: '', state: 'pending',
+        modified: file.lastModified, title: file.name.slice(0, 200), description: '', encodingPreset: 'smooth', state: 'pending',
         confirmedBytes: 0, percent: 0, note: 'Waiting to upload.' };
       files.current.set(item.key, file); next.push(item);
     }
@@ -255,7 +255,7 @@ export function BatchUploader({ videos, onBusy, onAuthError }: {
           <strong>Original file needed. Your progress is saved.</strong><br />
           Use Choose Files above to select <strong>{item.filename}</strong> again, then click Start / Resume queue.
         </p>}
-        <UploadMetadataFields itemKey={item.key} title={item.title} description={item.description}
+        <UploadMetadataFields itemKey={item.key} title={item.title} description={item.description} encodingPreset={item.encodingPreset ?? 'original'}
           editable={canEdit} onChange={patch => update(item.key, patch)} />
         {index === 0 && (
           <div className="actions">

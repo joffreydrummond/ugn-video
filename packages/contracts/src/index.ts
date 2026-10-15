@@ -1,3 +1,4 @@
+export type EncodingPreset = 'standard' | 'smooth' | 'original';
 export type VideoStatus = 'UPLOADING' | 'UPLOADED' | 'PROCESSING' | 'RETRYING' | 'STOPPING' | 'STOPPED' | 'DELETING' | 'READY' | 'FAILED';
 export const PART_SIZE = 64 * 1024 * 1024;
 export const MAX_BYTES = 20 * 1024 ** 3;

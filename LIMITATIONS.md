@@ -1,72 +1,56 @@
-# Current limitations
+# Limitations
 
-Updated October 15, 2026. Actual passed scenarios and evidence are in VERIFICATION.md; the completion checklist tracks remaining work.
+Current as of October 15, 2026. See VERIFICATION.md for precise test evidence.
 
-## Assessment gaps
+## Remaining assessment evidence
 
-- No verified 10 GB+ upload or actual 10-hour processing/startup/late seeking yet.
-- Multipart inventory returned [] despite an extant upload with four directly readable parts. Root cause unknown; cancelled/expired storage deletion and orphan discovery need reliable direct evidence.
-- Shared client/server metadata/file/part/completion schemas and worker container checks are implemented with boundary tests; live API/browser regression remains pending. Renamed text-as-video rejection passed before this change.
-- Required frontend dependencies are integrated in the existing layout; Tailwind adoption is incremental alongside existing CSS. Upload metadata uses react-hook-form and shared zod. Login remains a simple existing controlled form. Broader end-to-end typing and browser regression remain.
-- Safari/iPhone/iPad, Samsung Internet and Instagram/Facebook/TikTok webviews untested. Samsung S23 Ultra Chrome and desktop Chrome/Edge/Firefox were reported working; VLC passed.
-- Resource guard behavior under load, racing/repeated requests, queued Stop, STOPPED deletion and interrupted deletion need live verification.
-- Fresh isolated installation, S3 environment-only portability, docs W1–W7 and final full local checks remain.
-- Optional custom-thumbnail upload is not implemented.
+10 GB+ upload and true ten-hour processing/startup/late-seek measurements are pending.
+Safari/iPhone/iPad, Samsung Internet, in-app webviews, actual AVPlayer/ExoPlayer and
+screen-reader checks are unverified. AWS was not deployed; bucket CORS/region support
+has source tests, not a real-account portability guarantee. Clean checkout at 5029615
+passed with new volumes; cached Docker images/build layers may have been reused.
 
-## Intentional boundaries
+Cancel and tracked-expiry cleanup have been verified at the stated evidence level.
+The MinIO prefix-list discrepancy was isolated and avoided by listing without Prefix
+and locally filtering originals/. The provider's internal cause is not established.
+Live untracked-orphan injection/expiry, interrupted deletion, active-request races,
+exhausted worker retries and disk/resource pressure still need dedicated tests.
 
-- Queue/history/watch position are browser-profile local; file access requires reselection after tab close. Resume identity is name/size/modification time, not a cryptographic fingerprint.
-- Expired browser rows currently say Cancelled. History is capped at 50 and is not true per-user/server-backed history.
-- Sequential 64 MiB browser parts and one job per worker; no validated multiworker capacity model.
-- Encodes restart from the original after crash/retry. Fixed target heights may upscale small sources; advertised bandwidth/resolution and aspect ratios need review.
-- PostgreSQL and Redis reconciliation is recoverable coordination, not an exactly-once transaction.
-- CPU/memory limits and application disk monitoring are not hard disk quotas. Original storage and scratch share host capacity.
-- Cleanup needs backend/dependencies running. Seven-day idle window updates on signing/listing parts; separate MinIO stale-upload fallback is based on initiation time.
-- Missing playback returns HTTP 200 with a NOT_FOUND payload; richer HTTP status semantics remain a possible improvement.
-- Current CORS accepts one configured origin. Localhost reviewer defaults and temporary LAN testing are separate configurations. Remote demo needs HTTPS hosting.
-- One environment-configured admin, no signup or account-backed credentials. Rate limits, production migrations, private paid CDN media and operational hardening remain production work.
-- Legacy migration copies completed objects up to 5 GiB, size-verifies only, and cannot migrate unfinished multipart uploads.
-- Tests mostly mock dependencies. Sixty-one preparation tests and a successful host backend check are not a complete live integration suite.
+## Intentional prototype scope
 
-Supplemental TypeScript files have now been received and audited. The diagnostic update adds direct session snapshots and post-deletion verification; it does not resolve the root cause of empty multipart inventory or change production cleanup behavior.
-
-## Step 2 prepared checkpoint
-
-- Step 1 browser title validation and short upload/playback were confirmed by the user;
-  LAN HTTP file selection was fixed with a tested upload-key fallback.
-- Explicit multi-origin API/MinIO configuration and separate AWS bucket-CORS mode
-  are implemented. AWS readback is required; permission errors are not hidden.
-- New HLS masters advertise encoded dimensions and measured bandwidth including
-  container/audio overhead; existing videos and the fixed three-height ladder remain unchanged.
-- Preparation checks: 70 automated tests, all workspace TypeScript checks and Vite
-  production build pass. A real local FFmpeg/FFprobe HLS smoke check produced
-  854x480 output with measured master metadata. The large bundle warning remains.
-- Docker/phone regression and AWS runtime behavior are NOT verified here.
-- Multipart listing discrepancy remains open. An unfiltered read-only diagnostic was
-  added; direct captured-upload-ID snapshot/verify remains required for cleanup proof.
-- Next gate: STEP2-UPDATE.md installation checks, then the remaining smaller tests.
-
-## Multipart inventory diagnosis and cancellation proof — October 15
-
-Session db94fb10-52b0-419b-9f70-f43b8286be3d had two saved multipart parts
-(134217728 bytes) before cancellation, verified directly by its captured upload ID.
-Prefix-filtered inventory returned no entries while unfiltered inventory returned
-that same key/upload ID. This isolates a prefix-listing discrepancy in the running
-MinIO setup; the underlying MinIO implementation cause is not established.
-
-After cancellation, captured-ID verification reported database ABSENT, original
-absent, generated files zero, multipart ABSENT, saved parts zero, deletionVerified
-true. Cancellation storage cleanup is therefore verified, not inferred from listing.
-Expiry storage cleanup still needs its own captured-ID before/after test.
-
-The orphan sweeper and default inspector now list without Prefix and filter
-originals/ keys locally. Sweeper skips unrelated keys, empty IDs, recent uploads
-and tracked resumable uploads; both pagination cursors are retained and nonadvancing
-pages fail explicitly. Two regression tests cover scope, pagination and stuck pages.
-72 tests and workspace TypeScript checks pass in preparation. Live post-patch
-inventory and orphan-expiry behavior remain to be verified.
-
-Step 2 browser regression: user confirmed localhost admin login, Samsung Chrome
-public playback, new short upload and quality selection. New session
-bd61f9c0-bcbe-4297-bfd9-db28a09694bd master includes measured BANDWIDTH,
-AVERAGE-BANDWIDTH and encoded RESOLUTION for all three portrait renditions.
+- One environment-configured admin; no signup, hashed database account store, login rate
+  limit, token revocation list or complete CSRF hardening. Logout clears the browser
+  cookie; a copied JWT remains valid until expiry. Development credentials are placeholders.
+- Browser-local queue/history/watch position; not per-user or cross-device. History
+  retains 50 items. Expired uploads currently appear as Cancelled.
+- File access requires reselection after tab close. Identity uses filename, byte size
+  and modification time, not a cryptographic fingerprint. One editing tab is recommended;
+  Web Locks are used only where available.
+- Sequential 64 MiB parts, one processing job per worker and sequential rendition
+  encoding trade throughput for predictable resource use. No measured scale model.
+- Retries re-encode from zero. Three fixed heights may upscale low-resolution input.
+  HLS bandwidth is measured, with a conservative peak ceiling, not guaranteed encoder output size.
+- Optional custom thumbnails, captions, chapters, downloadable optimized MP4, DRM,
+  native apps and pre-upload compression are not implemented.
+- Compression after upload cannot reduce original upload traffic. Three renditions
+  combined plus the retained original may use more storage than the source. No
+  automatic original deletion; retention policy needs a deliberate admin decision.
+- Soft scratch/free-space monitoring is not a reservation or hard quota. Originals,
+  outputs and temporary copies compete for Docker host capacity.
+- Cross-service coordination is recoverable, not an exactly-once transaction. Fixed
+  object keys plus attempt checks are weaker than immutable attempt publication.
+- Cleanup requires running backend/storage/DB/Redis. MinIO initiation-age fallback
+  differs from application last-activity expiry.
+- Originals are private; generated video objects are public. READY hides incomplete
+  sessions from the catalog but does not prevent a guessed output URL from being fetched.
+- Native playback uses feature detection; compatibility is not proven on untested devices.
+  No explicit HDR tone mapping; color/rotation edge cases need broader input testing.
+- NOT_FOUND playback uses HTTP 200 with a status payload. DB status is a string, and
+  declared bytes use Float within the exact-integer size range rather than BigInt.
+- Docker runs Vite/tsx and Prisma db push for review. Production builds/migrations,
+  HTTPS, least-privilege roles, backups, metrics, alerting and hardening remain.
+- Known frontend bundle warning (~1.09 MB); dependency audit reported 10 vulnerabilities
+  and has not been triaged. Do not use npm audit fix --force without reviewing changes.
+- Most automated tests mock storage/DB/Redis. Unit passes do not prove cloud/device/load behavior.
+- Legacy migration only copies completed objects up to 5 GiB with size verification;
+  it does not migrate active multipart uploads.

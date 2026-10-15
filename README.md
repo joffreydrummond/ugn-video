@@ -2,7 +2,9 @@
 
 A video publishing prototype with resumable direct-to-storage uploads, background FFmpeg processing and public adaptive HLS playback.
 
-**Status:** core short-video flows, several failure/recovery scenarios, desktop Chrome/Edge/Firefox, Samsung S23 Ultra Chrome and VLC have been exercised. **10 GB+, 10-hour media, native Safari, full cleanup evidence and clean-install verification remain pending.** See [VERIFICATION.md](VERIFICATION.md) for precise evidence and [UGN-COMPLETION-CHECKLIST.md](UGN-COMPLETION-CHECKLIST.md) for remaining work.
+**Status:** short-video upload/playback, recovery/cleanup, batch controls and auth checks have passed in the stated scope. A separate clean checkout at **5029615** passed startup and test-video upload/playback. Desktop Chrome/Edge/Firefox, Samsung S23 Ultra Chrome and VLC were exercised. **10 GB+ and true ten-hour measurements, Apple/webview devices and AWS runtime remain unverified.** See [VERIFICATION.md](VERIFICATION.md) and [LIMITATIONS.md](LIMITATIONS.md).
+
+Design: [ARCHITECTURE.md](ARCHITECTURE.md) · Written responses: [ANSWERS.md](ANSWERS.md) · [Cost assumptions](COST-ESTIMATE.md) · [Completion checklist](UGN-COMPLETION-CHECKLIST.md) · [Large-media procedure](LARGE-MEDIA-TEST.md).
 
 ## Run locally
 
@@ -19,7 +21,7 @@ Prerequisites: Git, Docker Desktop using Linux containers, Docker Compose, netwo
    docker compose up --build
    ```
 
-MinIO builds from pinned source using infra/Minio.Dockerfile because registry pulls failed in the development environment. The first build can take time. Storage initialization must exit 0; backend health gates worker startup. Clean-checkout startup is still awaiting independent verification.
+MinIO builds from pinned source using infra/Minio.Dockerfile because registry pulls failed in the development environment. The first build can take time. Storage initialization must exit 0; backend health gates worker startup. Clean-checkout startup and short upload/playback passed with a separate Compose project and fresh volumes; cached build layers were not cleared.
 
 - Public viewer: http://localhost:5173/#/watch
 - Admin studio: http://localhost:5173/#/admin
@@ -77,7 +79,7 @@ S3_PUBLIC_URL=http://YOUR_LAN_IP:9000/media
 
 Keep S3_ENDPOINT=http://minio:9000 for container traffic. Wait for uploads/processing to become idle, then recreate minio/backend/frontend with `docker compose up -d --no-deps minio backend frontend`. Use http://YOUR_LAN_IP:5173/#/watch on desktop and phone; the explicit FRONTEND_ORIGINS list allows localhost and LAN browsers together. Do not put spaces around the commas (MinIO consumes the list directly). Check private-network firewall access to 5173/3000/9000 if unreachable. No router port-forwarding is needed.
 
-To return to localhost, restore the three values from .env.example and recreate those services. LAN HTTP testing is not an internet deployment; a remote live demo needs separately configured HTTPS hosting. GitHub hosts the source, not this Docker runtime.
+To return to localhost, set FRONTEND_ORIGIN=http://localhost:5173, remove the optional FRONTEND_ORIGINS override, set S3_BROWSER_ENDPOINT=http://localhost:9000 and S3_PUBLIC_URL=http://localhost:9000/media, then recreate those services. LAN HTTP testing is not an internet deployment; a remote live demo needs separately configured HTTPS hosting. GitHub hosts the source, not this Docker runtime.
 
 ## Development and checks
 
@@ -87,12 +89,12 @@ npm.cmd ci --ignore-scripts
 npx.cmd prisma generate --schema apps/backend/prisma/schema.prisma
 npm.cmd run check --workspaces --if-present
 npm.cmd test
-npx.cmd vite build apps/frontend
+npm.cmd exec -w @ugn/frontend -- vite build
 ```
 
 Prisma generation on the host supplies editor types; Docker generation does not update host node_modules. Restart VS Code's TypeScript server if needed. Elsewhere use npm/npx without .cmd.
 
-The tests include queue transfer/reconciliation, management/recovery/processing controls, public serialization, playback helpers and subprocess abort behavior. Fifty passed in the preparation environment; see verification record for local versus mocked evidence.
+The tests include queue transfer/reconciliation, management/recovery/processing controls, public serialization, playback helpers and subprocess abort behavior. 72 passed in the preparation environment; see verification record for local versus mocked evidence.
 
 After source changes rebuild affected services. Save a reviewed Git checkpoint before destructive tests. Avoid staging .env, media, node_modules, archives, volumes and generated output.
 
@@ -109,43 +111,31 @@ docker compose top worker
 
 For stale UI rebuild frontend and refresh. A restored upload needs original-file reselection. For phone failures check reachable frontend/API/storage and matching CORS. For presigned PUT failures inspect response and retain requestChecksumCalculation WHEN_REQUIRED; do not rewrite signed URLs.
 
-**Known diagnostic issue:** infra/inspect-storage.ts's multipart inventory returned [] during a real paused upload although direct ListParts found four parts. Its output alone cannot establish cleanup. Diagnosis/fix and repeatable cleanup verification are pending.
+**Multipart inventory:** the live MinIO instance omitted uploads when a Prefix filter was supplied. The inspector and orphan sweeper now list without Prefix and locally filter originals/ keys; post-fix live listing passed. Captured-ID cancellation and tracked-expiry checks passed at the evidence level recorded in VERIFICATION.md. Inventory alone is not proof of removal. See [STORAGE-VERIFICATION.md](STORAGE-VERIFICATION.md).
 
 ## Remaining assessment work
 
-See the checklist. Priorities before the large-file test: reliable cleanup inspection, validation/security/repeated-action/batch cases, required frontend libraries/theme/forms audit, clean install, documentation and final checks. Tailwind 3 theme utilities, bundled Bebas Neue/Montserrat fonts, react-hook-form upload metadata with shared zod validation, Framer Motion, lucide-react and react-hot-toast are now integrated. Existing CSS remains for established layouts; this is incremental adoption, not an all-utility rewrite. Browser regression after this change remains pending. Optional custom-thumbnail upload is not implemented.
-
-10 GB size and 10-hour duration are distinct requirements; record actual media size/duration, resources, startup and late-seek timings. Unavailable browsers/devices must remain Not tested. ARCHITECTURE.md and ANSWERS.md W1–W7 still need final preparation/review.
+The main remaining evidence is real 10 GB+/ten-hour media performance. Review the written answers, final checks and demo/submission checklist. Unsupported/unavailable test platforms stay Not tested. Optional custom thumbnails are not implemented. The development bundle and dependency-audit findings remain documented limitations.
 
 ## AI assistance
 
 Joffrey directed requirements and performed the reported local tests. ChatGPT assisted with implementation, debugging, automated checks and documentation. Preparation checks are separated from actual device/runtime observations. The candidate must review, understand and be able to explain/modify all code.
 
-## Direct cleanup verification
+## Storage, validation and media settings
 
-See STORAGE-VERIFICATION.md. The inspector now directly checks tracked multipart IDs and can save an immutable snapshot before cancellation/deletion. Pipe that snapshot into verify after deletion; a missing DB row alone is not proof. Tools are read-only and make no changes to storage, database or queue. Inventory discovery remains a separate unresolved provider behavior.
+Shared zod schemas validate metadata, file declarations, part bounds and completion.
+Worker FFprobe checks actual media; extensions alone do not prove a video is valid.
+The required frontend libraries have actual uses; Tailwind augments existing layout CSS.
 
-## Validation and frontend conventions update
+MinIO uses server-wide origin configuration. For AWS, S3_CORS_MODE=bucket writes and
+reads back GET/HEAD/PUT bucket CORS with ETag exposure. Change regional endpoints,
+region, bucket, credentials and public URL; regional bucket creation is handled.
+The initializer manages a public processed-media policy, so IAM/public-access
+settings must permit it. Real AWS remains untested. CORS does not grant object access.
 
-See STEP1-UPDATE.md for installation. Shared schemas in packages/contracts/src/validation.ts validate metadata, supported filename extensions, integer size limits, signing part bounds and completion payloads. Backend invalid payloads return HTTP 400. The worker checks the actual FFprobe container and video stream/duration. Declared extension checks alone do not establish valid media. Upload fields use react-hook-form with zod errors; fonts are bundled locally rather than fetched from a font CDN. New dependency lockfile supplied. Sixty-one tests and all workspace TS checks passed in the preparation environment; live regression is pending.
-
-## Storage configuration update
-
-See STEP2-UPDATE.md for the ordered rebuild and verification commands. MinIO uses
-server-wide origin configuration; S3_CORS_MODE=bucket instead installs and reads back
-GET/HEAD/PUT bucket CORS with ETag exposure for AWS. Set the actual AWS regional
-endpoint, region, credentials, bucket and public URL; creation supplies a location
-constraint outside us-east-1. The initializer manages the processed-media public
-policy, so the AWS account/bucket public-access settings must permit that policy.
-Real AWS deployment has not been verified. CORS does not grant object access.
-
-Newly encoded master playlists include actual encoded resolution, measured average
-bitrate and a conservative segment bitrate ceiling including audio/mux overhead.
-Existing published playlists are unchanged. Three fixed heights are retained,
-including upscaling low-resolution input; portrait output retains its aspect ratio.
-
-Multipart inventory is advisory. `inspect-storage.ts inventory-all` compares listing
-without a prefix; snapshot/verify checks a captured upload ID directly. Live comparison isolated a prefix-listing discrepancy: unfiltered inventory finds
-the same upload that direct ListParts finds. The sweeper and inspector now list
-without Prefix and filter originals/ locally. Captured-ID cancellation cleanup
-has passed; expiry and orphan cleanup still require separate runtime checks.
+New masters include measured bandwidth and encoded dimensions. Existing playlists
+are unchanged. Three heights may upscale small inputs. Generated versions are not
+guaranteed to total less storage than the original; originals are currently retained.
+Post-upload compression cannot shrink the initial upload. Optional local compression,
+source-aware presets and an explicit retention policy are future work, not required
+before the current large-file assessment test.

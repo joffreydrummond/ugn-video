@@ -1,83 +1,56 @@
-# Read-only storage verification on Windows
+# Direct storage cleanup verification
 
-The bucket inventory can return [] even though a specific upload has parts. This tool directly inspects tracked upload IDs and keeps the identity across database deletion. It diagnoses the mismatch; the provider inventory root cause remains unresolved.
+Inventory is discovery, not deletion proof. Capture the exact key/upload ID before
+removing a session; then inspect that same ID after the database row is gone.
+Tools are read-only. Keep saved snapshots private; they contain storage identifiers.
 
-## Install once
+## Before cleanup
 
-Copy the package files into the project root, preserving folders. Rebuild backend only while uploads are idle:
-
-```powershell
-docker compose up -d --build --no-deps backend
-```
-
-No migration, volume deletion or storage recreation is needed. Ordinary tests run with npm.cmd test (55 expected in this revision).
-
-## Cancellation test — capture before cancelling
-
-1. Start a fresh disposable upload, pause after at least one completed 64 MiB part.
-2. Get its exact ID (do not filter by typed title):
+With a paused upload that has at least one complete part, replace SESSION_ID:
 
 ```powershell
-'SELECT id, title, status FROM "Video" WHERE status = ''UPLOADING'' ORDER BY "createdAt" DESC;' | docker compose exec -T postgres psql -U ugn -d ugn
+$snapshotPath = Join-Path $env:TEMP 'ugn-storage-before.json'
+$report = docker compose exec -T backend npx tsx infra/inspect-storage.ts snapshot SESSION_ID
+if ($LASTEXITCODE -ne 0) { throw 'Snapshot failed; do not delete yet.' }
+$report | Set-Content -Encoding UTF8 -Path $snapshotPath
+Get-Content -Raw $snapshotPath
 ```
 
-3. Replace SESSION_ID below with that ID and capture the report outside the repository. Set-Content runs only if the command succeeded:
+Confirm correct ID, multipart PRESENT and savedParts >0. For READY/FAILED/STOPPED
+object-deletion tests, expect the appropriate status and originalExists true;
+there may be no active multipart ID. Do not interpret NOT_CAPTURED as MPU absence.
+
+## After cancellation/deletion/expiry
 
 ```powershell
-$cleanupSnapshot = Join-Path $env:TEMP "ugn-cleanup-before.json"
-$cleanupReport = docker compose exec -T backend npx tsx infra/inspect-storage.ts snapshot SESSION_ID
-if ($LASTEXITCODE -ne 0) { throw "Snapshot failed. Do not cancel yet." }
-$cleanupReport | Set-Content -Encoding UTF8 -Path $cleanupSnapshot
-Get-Content -Raw $cleanupSnapshot
+Get-Content -Raw $snapshotPath | docker compose exec -T backend npx tsx infra/inspect-storage.ts verify
 ```
 
-Expect databaseStatus UPLOADING, multipart PRESENT, savedParts >= 1. snapshot.uploadId must be populated. Do not proceed if not. The snapshot is diagnostic metadata; do not commit it.
+Expected deletionVerified true, databaseStatus ABSENT, originalExists false and
+generatedFileCount 0. A captured active MPU must be ABSENT. Exit 2 means deletion
+not yet verified; errors exit 1 and are not interpreted as missing data. Retry only
+after reviewing state/logs, rather than using an empty inventory as proof.
 
-4. Click Cancel upload. Then verify using the SAME saved snapshot:
+Expiry tests temporarily shorten UPLOAD_IDLE_DAYS to 0.002 and recreate the backend,
+close the admin tab, wait for expiry plus the 60-second maintenance interval, then
+verify the saved ID. The shortened threshold applies to all idle uploads. Restore
+7 and recreate/confirm the backend even if the test fails. Never discard saved
+snapshots before the before/after comparison.
 
-```powershell
-Get-Content -Raw $cleanupSnapshot | docker compose exec -T backend npx tsx infra/inspect-storage.ts verify
-```
+## Inventory and observed provider discrepancy
 
-Expect databaseStatus ABSENT, multipart ABSENT, originalExists false, generatedFileCount 0, deletionVerified true. Verification uses the captured upload ID even after the DB row disappears. Remaining objects/parts return exit code 2; storage/configuration errors return 1, not a false success.
+`inspect-storage.ts` lists without Prefix, locally selects originals/ keys and also
+checks tracked multipart IDs directly. `inventory-all` lists all keys read-only.
+The live MinIO setup omitted an active MPU with Prefix originals/, while unfiltered
+listing returned that exact key/ID. The workaround was verified on another paused
+upload; internal MinIO cause remains unknown. Both inventory and orphan cleanup now
+use unfiltered listing and application-side scoping with pagination guards.
 
-## Expiration test
+Cancellation db94fb10-52b0-419b-9f70-f43b8286be3d has pasted before/after proof: two
+parts/128 MiB before, multipart ABSENT after. Tracked expiry of
+492ae5a6-afe5-462c-b10e-3fd2ca4f8207 was user-confirmed with retention restored to 7.
+STOPPED deletion 32762d10-f6ae-4191-a2be-51a216528b68 has pasted DB/object absence
+proof; other batch videos stayed playable. Full detail: VERIFICATION.md.
 
-Use only disposable unfinished uploads. Capture a PRESENT snapshot with the normal seven-day timeout first. Close the admin tab. Set UPLOAD_IDLE_DAYS=0.002 in .env and recreate backend without rebuild. Wait four minutes, then pipe the saved snapshot into verify. Confirm the record and parts are absent. Restore UPLOAD_IDLE_DAYS=7 and recreate backend even if verification fails.
-
-## READY/FAILED/STOPPED deletion
-
-Snapshot an existing disposable session before deleting it, then pipe the same report into verify afterward. Original and generated file counts should change to absent/zero. READY sessions have no active multipart ID; the snapshot establishes which object prefix was checked. Inventory of old orphan upload IDs is not implied by this per-session object test.
-
-## Inventory mode
-
-```powershell
-docker compose exec backend npx tsx infra/inspect-storage.ts
-```
-
-This prints bucket multipart inventory AND direct checks of tracked UPLOADING/DELETING rows. Empty inventory alone explicitly is not proof of cleanup. No mutations are performed.
-
-## Multipart inventory diagnosis and cancellation proof — October 15
-
-Session db94fb10-52b0-419b-9f70-f43b8286be3d had two saved multipart parts
-(134217728 bytes) before cancellation, verified directly by its captured upload ID.
-Prefix-filtered inventory returned no entries while unfiltered inventory returned
-that same key/upload ID. This isolates a prefix-listing discrepancy in the running
-MinIO setup; the underlying MinIO implementation cause is not established.
-
-After cancellation, captured-ID verification reported database ABSENT, original
-absent, generated files zero, multipart ABSENT, saved parts zero, deletionVerified
-true. Cancellation storage cleanup is therefore verified, not inferred from listing.
-Expiry storage cleanup still needs its own captured-ID before/after test.
-
-The orphan sweeper and default inspector now list without Prefix and filter
-originals/ keys locally. Sweeper skips unrelated keys, empty IDs, recent uploads
-and tracked resumable uploads; both pagination cursors are retained and nonadvancing
-pages fail explicitly. Two regression tests cover scope, pagination and stuck pages.
-72 tests and workspace TypeScript checks pass in preparation. Live post-patch
-inventory and orphan-expiry behavior remain to be verified.
-
-Step 2 browser regression: user confirmed localhost admin login, Samsung Chrome
-public playback, new short upload and quality selection. New session
-bd61f9c0-bcbe-4297-bfd9-db28a09694bd master includes measured BANDWIDTH,
-AVERAGE-BANDWIDTH and encoded RESOLUTION for all three portrait renditions.
+These tracked-session tests do not replace a separate live untracked-orphan
+injection/expiry test, nor do they prove hard-crash behavior during deletion.

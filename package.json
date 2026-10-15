@@ -9,5 +9,11 @@
     "dev": "docker compose up --build",
     "check": "npm run check --workspaces --if-present",
     "test": "node scripts/test.mjs"
+  },
+  "devDependencies": {
+    "prisma": "^6.19.3"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.3"
   }
 }

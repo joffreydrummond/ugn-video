@@ -1,5 +1,8 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 * { box-sizing: border-box; }
-body { margin: 0; background: #101014; color: #f4f4f5; font: 16px system-ui, sans-serif; }
+body { margin: 0; background: #101014; color: #f4f4f5; font: 16px 'Montserrat', sans-serif; }
 main { max-width: 1100px; margin: auto; padding: 36px 24px; }
 header { display: flex; justify-content: space-between; align-items: center; gap: 16px; border-bottom: 1px solid #34343a; padding-bottom: 24px; }
 header b { color: #ef4444; letter-spacing: 2px; }
@@ -82,3 +85,6 @@ nav a { font-size: 14px; }
 .button-link { display: inline-block; background: #dc2626; color: #fff; padding: 12px 18px; border-radius: 6px; font-weight: 700; text-decoration: none; }
 footer { border-top: 1px solid #34343a; margin-top: 48px; padding-top: 16px; font-size: 13px; }
 @media (max-width: 600px) { .public-intro { padding-top: 32px; } .video-player { padding: 16px; } .player-heading .actions { width: 100%; } }
+
+h1, h2, h3 { font-family: 'Bebas Neue', sans-serif; font-weight: 400; letter-spacing: 0.03em; }
+button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }

@@ -1,3 +1,8 @@
+import { createUploadKey } from './upload-key';
+import { UploadMetadataFields } from './UploadMetadataFields';
+import { uploadSchema, metadataSchema } from '../../../packages/contracts/src/validation';
+import { Upload, History, Play, Pause } from 'lucide-react';
+import toast from 'react-hot-toast';
 import React, { useEffect, useRef, useState } from 'react';
 import { api, ApiError } from './api';
 import { QUEUE_KEY, HISTORY_KEY, separateFinished, type UploadHistory, MAX_BYTES, restoreQueue, sameFile, transfer, TransferInterrupted, type UploadEntry } from './upload-queue';
@@ -88,12 +93,12 @@ export function BatchUploader({ videos, onBusy, onAuthError }: {
     const next = [...entries.current];
     const rejected: string[] = [];
     for (const file of Array.from(selected)) {
-      if (file.size <= 0 || file.size > MAX_BYTES || !/\.(mp4|mov|m4v|mkv|webm)$/i.test(file.name)) {
+      if (!uploadSchema.safeParse({ title: file.name.slice(0, 200), filename: file.name, size: file.size, description: '' }).success) {
         rejected.push(file.name); continue;
       }
       const existing = next.find(item => unfinished(item) && sameFile(item, file));
       if (existing) { files.current.set(existing.key, file); existing.note = 'File matched. Click Start / Resume queue to continue from saved parts.'; continue; }
-      const item: UploadEntry = { key: crypto.randomUUID(), filename: file.name, size: file.size,
+      const item: UploadEntry = { key: createUploadKey(), filename: file.name, size: file.size,
         modified: file.lastModified, title: file.name.slice(0, 200), description: '', state: 'pending',
         confirmedBytes: 0, percent: 0, note: 'Waiting to upload.' };
       files.current.set(item.key, file); next.push(item);
@@ -131,6 +136,7 @@ export function BatchUploader({ videos, onBusy, onAuthError }: {
       }
     }
     update(item.key, { state: 'cancelled', percent: 0, note: 'Upload cancelled.' });
+    toast.success('Upload cancelled.');
     files.current.delete(item.key);
     setNote('Upload cancelled and moved to history. Choose a file to start a fresh upload.');
   }
@@ -156,7 +162,7 @@ export function BatchUploader({ videos, onBusy, onAuthError }: {
       if (!item) { setNote('The upload queue is clear. Recent uploads are in history; processing is shown in Sessions below.'); break; }
       const file = files.current.get(item.key);
       if (!file) { setNote(`Select the original file for “${item.title}” to continue. You can reselect multiple originals together.`); break; }
-      if (!item.title.trim() || item.title.length > 200 || item.description.length > 5000) {
+      if (!metadataSchema.safeParse({ title: item.title, description: item.description }).success) {
         update(item.key, { state: 'error', note: 'Enter a title (1–200 characters) and description of at most 5,000 characters.' }); break;
       }
       active.current = item.key; completing.current = false; setFinalizing(false);
@@ -168,6 +174,7 @@ export function BatchUploader({ videos, onBusy, onAuthError }: {
           finalizing: () => { completing.current = true; setFinalizing(true); },
         });
         files.current.delete(item.key);
+        toast.success(`Upload received: ${item.title}`);
       } catch (error) {
         if (cancelled.current.has(item.key)) {
           const current = entries.current.find(row => row.key === item.key)!;
@@ -222,14 +229,18 @@ export function BatchUploader({ videos, onBusy, onAuthError }: {
   return <section>
     <h2>Upload sessions</h2>
     <div className="actions" aria-label="Upload views">
-      <button type="button" className={view === 'upload' ? '' : 'secondary'} aria-pressed={view === 'upload'} onClick={() => setView('upload')}>Upload videos</button>
-      <button type="button" className={view === 'history' ? '' : 'secondary'} aria-pressed={view === 'history'} onClick={() => setView('history')}>Upload history ({history.length})</button>
+      <button type="button" className={view === 'upload' ? '' : 'secondary'} aria-pressed={view === 'upload'} onClick={() => setView('upload')}><Upload size={16} aria-hidden="true" /> Upload videos</button>
+      <button type="button" className={view === 'history' ? '' : 'secondary'} aria-pressed={view === 'history'} onClick={() => setView('history')}><History size={16} aria-hidden="true" /> Upload history ({history.length})</button>
     </div>
     <div hidden={view !== 'upload'}>
     <p>Select several videos and upload them one at a time. Each completed upload enters the processing queue.</p>
     <label>Add videos or reselect originals to resume
       <input type="file" multiple accept="video/*,.mkv" disabled={running || cancelling.length > 0}
-        onChange={event => { choose(event.target.files); event.target.value = ''; }} />
+        onChange={event => {
+          try { choose(event.target.files); }
+          catch (error) { setNote(error instanceof Error ? error.message : 'Could not add the selected file.'); }
+          finally { event.target.value = ''; }
+        }} />
     </label>
     <p role="status">{note}</p>
     {restoreError && <p role="alert">{restoreError}</p>}
@@ -244,16 +255,15 @@ export function BatchUploader({ videos, onBusy, onAuthError }: {
           <strong>Original file needed. Your progress is saved.</strong><br />
           Use Choose Files above to select <strong>{item.filename}</strong> again, then click Start / Resume queue.
         </p>}
-        <label>Title<input value={item.title} maxLength={200} disabled={!canEdit} onChange={event => update(item.key, { title: event.target.value })} /></label>
-        <label>Description (optional)<textarea value={item.description} maxLength={5000} disabled={!canEdit}
-          onChange={event => update(item.key, { description: event.target.value })} /></label>
+        <UploadMetadataFields itemKey={item.key} title={item.title} description={item.description}
+          editable={canEdit} onChange={patch => update(item.key, patch)} />
         {index === 0 && (
           <div className="actions">
       <button type="button" disabled={running || cancelling.length > 0 || !rows.some(unfinished) || !selectedCount}
-        onClick={() => void start()}>Start / Resume queue</button>
+        onClick={() => void start()}><Play size={16} aria-hidden="true" /> Start / Resume queue</button>
       <button type="button" className="secondary" disabled={!running || finalizing} onClick={() => {
         paused.current = true; xhr.current?.abort(); setNote('Pausing the queue. Completed parts remain saved.');
-      }}>Pause queue</button>
+      }}><Pause size={16} aria-hidden="true" /> Pause queue</button>
 
     </div>
         )}

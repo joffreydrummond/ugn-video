@@ -69,11 +69,13 @@ Defaults remain localhost so reviewers can run this project on their own machine
 
 ```dotenv
 FRONTEND_ORIGIN=http://YOUR_LAN_IP:5173
+FRONTEND_ORIGINS=http://localhost:5173,http://YOUR_LAN_IP:5173
+S3_CORS_MODE=minio
 S3_BROWSER_ENDPOINT=http://YOUR_LAN_IP:9000
 S3_PUBLIC_URL=http://YOUR_LAN_IP:9000/media
 ```
 
-Keep S3_ENDPOINT=http://minio:9000 for container traffic. Wait for uploads/processing to become idle, then recreate minio/backend/frontend with `docker compose up -d --no-deps minio backend frontend`. Use http://YOUR_LAN_IP:5173/#/watch on desktop and phone; current CORS configuration accepts one frontend origin. Check private-network firewall access to 5173/3000/9000 if unreachable. No router port-forwarding is needed.
+Keep S3_ENDPOINT=http://minio:9000 for container traffic. Wait for uploads/processing to become idle, then recreate minio/backend/frontend with `docker compose up -d --no-deps minio backend frontend`. Use http://YOUR_LAN_IP:5173/#/watch on desktop and phone; the explicit FRONTEND_ORIGINS list allows localhost and LAN browsers together. Do not put spaces around the commas (MinIO consumes the list directly). Check private-network firewall access to 5173/3000/9000 if unreachable. No router port-forwarding is needed.
 
 To return to localhost, restore the three values from .env.example and recreate those services. LAN HTTP testing is not an internet deployment; a remote live demo needs separately configured HTTPS hosting. GitHub hosts the source, not this Docker runtime.
 
@@ -111,7 +113,7 @@ For stale UI rebuild frontend and refresh. A restored upload needs original-file
 
 ## Remaining assessment work
 
-See the checklist. Priorities before the large-file test: reliable cleanup inspection, validation/security/repeated-action/batch cases, required frontend libraries/theme/forms audit, clean install, documentation and final checks. Required Tailwind/fonts, react-hook-form + zod, Framer Motion, lucide-react and react-hot-toast are not yet installed in the reviewed frontend package. Optional custom-thumbnail upload is not implemented.
+See the checklist. Priorities before the large-file test: reliable cleanup inspection, validation/security/repeated-action/batch cases, required frontend libraries/theme/forms audit, clean install, documentation and final checks. Tailwind 3 theme utilities, bundled Bebas Neue/Montserrat fonts, react-hook-form upload metadata with shared zod validation, Framer Motion, lucide-react and react-hot-toast are now integrated. Existing CSS remains for established layouts; this is incremental adoption, not an all-utility rewrite. Browser regression after this change remains pending. Optional custom-thumbnail upload is not implemented.
 
 10 GB size and 10-hour duration are distinct requirements; record actual media size/duration, resources, startup and late-seek timings. Unavailable browsers/devices must remain Not tested. ARCHITECTURE.md and ANSWERS.md W1–W7 still need final preparation/review.
 
@@ -122,3 +124,28 @@ Joffrey directed requirements and performed the reported local tests. ChatGPT as
 ## Direct cleanup verification
 
 See STORAGE-VERIFICATION.md. The inspector now directly checks tracked multipart IDs and can save an immutable snapshot before cancellation/deletion. Pipe that snapshot into verify after deletion; a missing DB row alone is not proof. Tools are read-only and make no changes to storage, database or queue. Inventory discovery remains a separate unresolved provider behavior.
+
+## Validation and frontend conventions update
+
+See STEP1-UPDATE.md for installation. Shared schemas in packages/contracts/src/validation.ts validate metadata, supported filename extensions, integer size limits, signing part bounds and completion payloads. Backend invalid payloads return HTTP 400. The worker checks the actual FFprobe container and video stream/duration. Declared extension checks alone do not establish valid media. Upload fields use react-hook-form with zod errors; fonts are bundled locally rather than fetched from a font CDN. New dependency lockfile supplied. Sixty-one tests and all workspace TS checks passed in the preparation environment; live regression is pending.
+
+## Storage configuration update
+
+See STEP2-UPDATE.md for the ordered rebuild and verification commands. MinIO uses
+server-wide origin configuration; S3_CORS_MODE=bucket instead installs and reads back
+GET/HEAD/PUT bucket CORS with ETag exposure for AWS. Set the actual AWS regional
+endpoint, region, credentials, bucket and public URL; creation supplies a location
+constraint outside us-east-1. The initializer manages the processed-media public
+policy, so the AWS account/bucket public-access settings must permit that policy.
+Real AWS deployment has not been verified. CORS does not grant object access.
+
+Newly encoded master playlists include actual encoded resolution, measured average
+bitrate and a conservative segment bitrate ceiling including audio/mux overhead.
+Existing published playlists are unchanged. Three fixed heights are retained,
+including upscaling low-resolution input; portrait output retains its aspect ratio.
+
+Multipart inventory is advisory. `inspect-storage.ts inventory-all` compares listing
+without a prefix; snapshot/verify checks a captured upload ID directly. Live comparison isolated a prefix-listing discrepancy: unfiltered inventory finds
+the same upload that direct ListParts finds. The sweeper and inspector now list
+without Prefix and filter originals/ locally. Captured-ID cancellation cleanup
+has passed; expiry and orphan cleanup still require separate runtime checks.

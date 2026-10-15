@@ -172,3 +172,55 @@ Next action: follow the current checkpoint sequence above. Original detailed box
 ## Latest audit
 
 See ASSESSMENT-AUDIT.md for source-confirmed gaps and the order of work. New read-only cleanup diagnostics have 5 automated tests, bringing the suite to 55; live verification remains pending.
+
+## Step 1 prepared update
+
+- [x] Shared zod upload/metadata/part/completion schemas and actual-container helper implemented.
+- [x] Six boundary tests added; 61 tests and workspace TypeScript checks pass in preparation.
+- [x] Required frontend dependencies integrated in existing upload fields/theme/icons/toasts/motion; fonts bundled.
+- [x] Lockfile install, Prisma generation and frontend build checked.
+- [ ] Install update and complete STEP1-UPDATE.md browser/API regression.
+- [ ] Commit reviewed update after local checks.
+
+Remaining live checks and other source-audit findings stay open.
+
+## Step 2 prepared checkpoint
+
+- Step 1 browser title validation and short upload/playback were confirmed by the user;
+  LAN HTTP file selection was fixed with a tested upload-key fallback.
+- Explicit multi-origin API/MinIO configuration and separate AWS bucket-CORS mode
+  are implemented. AWS readback is required; permission errors are not hidden.
+- New HLS masters advertise encoded dimensions and measured bandwidth including
+  container/audio overhead; existing videos and the fixed three-height ladder remain unchanged.
+- Preparation checks: 70 automated tests, all workspace TypeScript checks and Vite
+  production build pass. A real local FFmpeg/FFprobe HLS smoke check produced
+  854x480 output with measured master metadata. The large bundle warning remains.
+- Docker/phone regression and AWS runtime behavior are NOT verified here.
+- Multipart listing discrepancy remains open. An unfiltered read-only diagnostic was
+  added; direct captured-upload-ID snapshot/verify remains required for cleanup proof.
+- Next gate: STEP2-UPDATE.md installation checks, then the remaining smaller tests.
+
+## Multipart inventory diagnosis and cancellation proof — October 15
+
+Session db94fb10-52b0-419b-9f70-f43b8286be3d had two saved multipart parts
+(134217728 bytes) before cancellation, verified directly by its captured upload ID.
+Prefix-filtered inventory returned no entries while unfiltered inventory returned
+that same key/upload ID. This isolates a prefix-listing discrepancy in the running
+MinIO setup; the underlying MinIO implementation cause is not established.
+
+After cancellation, captured-ID verification reported database ABSENT, original
+absent, generated files zero, multipart ABSENT, saved parts zero, deletionVerified
+true. Cancellation storage cleanup is therefore verified, not inferred from listing.
+Expiry storage cleanup still needs its own captured-ID before/after test.
+
+The orphan sweeper and default inspector now list without Prefix and filter
+originals/ keys locally. Sweeper skips unrelated keys, empty IDs, recent uploads
+and tracked resumable uploads; both pagination cursors are retained and nonadvancing
+pages fail explicitly. Two regression tests cover scope, pagination and stuck pages.
+72 tests and workspace TypeScript checks pass in preparation. Live post-patch
+inventory and orphan-expiry behavior remain to be verified.
+
+Step 2 browser regression: user confirmed localhost admin login, Samsung Chrome
+public playback, new short upload and quality selection. New session
+bd61f9c0-bcbe-4297-bfd9-db28a09694bd master includes measured BANDWIDTH,
+AVERAGE-BANDWIDTH and encoded RESOLUTION for all three portrait renditions.

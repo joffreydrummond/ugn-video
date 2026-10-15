@@ -1,3 +1,5 @@
+import { measurePlaylist, masterPlaylist, type Rendition } from './hls-metadata';
+import { supportedContainer } from '../../../packages/contracts/src/validation';
 import 'reflect-metadata';
 import { Worker } from 'bullmq';
 import { Module, Injectable, type OnApplicationShutdown } from '@nestjs/common';
@@ -111,6 +113,7 @@ const worker = new Worker('videos', async (job, lockToken) => {
     const probe = JSON.parse(await encode('ffprobe', [
       '-v', 'error', '-show_format', '-show_streams', '-of', 'json', `${directory}/input`,
     ]));
+    if (!supportedContainer(probe.format?.format_name)) throw new Error('Invalid media container. Use MP4, MOV, M4V, MKV or WebM.');
     if (!probe.streams?.some((stream: any) => stream.codec_type === 'video')) {
       throw new Error('The uploaded file contains no video stream.');
     }
@@ -118,6 +121,7 @@ const worker = new Worker('videos', async (job, lockToken) => {
     if (!Number.isFinite(duration) || duration <= 0) throw new Error('Invalid media duration.');
     await db.video.updateMany({ where: { id, status: 'PROCESSING', processingToken }, data: { duration } });
     const heights = [1080, 720, 480];
+    const renditions: Rendition[] = [];
     let previousSpeed: number | null = null;
 
     for (let index = 0; index < heights.length; index++) {
@@ -158,6 +162,14 @@ const worker = new Worker('videos', async (job, lockToken) => {
           : null;
         report(5 + index * 30 + encoded / duration * 30, stage, remaining);
       });
+      const playlist = await readFile(`${directory}/${height}.m3u8`, 'utf8');
+      const segmentNames = playlist.split(/\r?\n/).filter(line => line && !line.startsWith('#'));
+      const segmentSizes = new Map(await Promise.all(segmentNames.map(async name => [name, (await stat(`${directory}/${name}`)).size] as const)));
+      const encodedProbe = JSON.parse(await encode('ffprobe', ['-v', 'error', '-select_streams', 'v:0',
+        '-show_entries', 'stream=width,height', '-of', 'json', `${directory}/${segmentNames[0]}`]));
+      const dimensions = encodedProbe.streams?.[0];
+      if (dimensions?.height !== height) throw new Error('Encoded rendition height does not match its label');
+      renditions.push({ height, width: dimensions.width, ...measurePlaylist(playlist, segmentSizes) });
       previousSpeed = duration / Math.max(0.001, (Date.now() - started) / 1000);
       report(5 + (index + 1) * 30, stage, null, true);
     }
@@ -185,8 +197,7 @@ const worker = new Worker('videos', async (job, lockToken) => {
       const remaining = elapsed >= 3 && uploadedBytes > 0 ? (totalBytes - uploadedBytes) / (uploadedBytes / elapsed) + 2 : null;
       report(96 + uploadedBytes / Math.max(1, totalBytes) * 3, 'Publishing video', remaining);
     }
-    const master = '#EXTM3U\n' + heights.map((height, index) =>
-      `#EXT-X-STREAM-INF:BANDWIDTH=${[6000000, 3000000, 1500000][index]}\n${height}.m3u8`).join('\n') + '\n';
+    const master = masterPlaylist(renditions);
     await assertOwner();
     await s3.send(new PutObjectCommand({ Bucket: bucket, Key: `videos/${id}/master.m3u8`, Body: master,
       ContentType: 'application/vnd.apple.mpegurl', CacheControl: 'no-cache' }), { abortSignal: abort.signal });

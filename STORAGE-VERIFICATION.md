@@ -56,3 +56,28 @@ docker compose exec backend npx tsx infra/inspect-storage.ts
 ```
 
 This prints bucket multipart inventory AND direct checks of tracked UPLOADING/DELETING rows. Empty inventory alone explicitly is not proof of cleanup. No mutations are performed.
+
+## Multipart inventory diagnosis and cancellation proof — October 15
+
+Session db94fb10-52b0-419b-9f70-f43b8286be3d had two saved multipart parts
+(134217728 bytes) before cancellation, verified directly by its captured upload ID.
+Prefix-filtered inventory returned no entries while unfiltered inventory returned
+that same key/upload ID. This isolates a prefix-listing discrepancy in the running
+MinIO setup; the underlying MinIO implementation cause is not established.
+
+After cancellation, captured-ID verification reported database ABSENT, original
+absent, generated files zero, multipart ABSENT, saved parts zero, deletionVerified
+true. Cancellation storage cleanup is therefore verified, not inferred from listing.
+Expiry storage cleanup still needs its own captured-ID before/after test.
+
+The orphan sweeper and default inspector now list without Prefix and filter
+originals/ keys locally. Sweeper skips unrelated keys, empty IDs, recent uploads
+and tracked resumable uploads; both pagination cursors are retained and nonadvancing
+pages fail explicitly. Two regression tests cover scope, pagination and stuck pages.
+72 tests and workspace TypeScript checks pass in preparation. Live post-patch
+inventory and orphan-expiry behavior remain to be verified.
+
+Step 2 browser regression: user confirmed localhost admin login, Samsung Chrome
+public playback, new short upload and quality selection. New session
+bd61f9c0-bcbe-4297-bfd9-db28a09694bd master includes measured BANDWIDTH,
+AVERAGE-BANDWIDTH and encoded RESOLUTION for all three portrait renditions.

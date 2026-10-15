@@ -10,3 +10,4 @@ coverage/
 *.mov
 *.mkv
 *.webm
+node_modules-old*/

@@ -1,3 +1,8 @@
+import '@fontsource/montserrat/latin-400.css';
+import '@fontsource/montserrat/latin-700.css';
+import '@fontsource/bebas-neue/latin-400.css';
+import { MotionConfig, motion, useReducedMotion } from 'framer-motion';
+import { Toaster } from 'react-hot-toast';
 import React, { useState, useEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
@@ -9,7 +14,7 @@ import { routeFromHash } from './playback-model';
 
 function readableProcessingError(error: unknown) {
   const detail = String(error || '');
-  if (/invalid data found|moov atom not found|no video stream|invalid media duration|no readable body/i.test(detail)) {
+  if (/invalid data found|moov atom not found|no video stream|invalid media duration|invalid media container|no readable body/i.test(detail)) {
     return 'This file could not be read as a video. Try uploading a valid video file.';
   }
   return 'Processing could not finish. Try processing again. If it keeps failing, try uploading a different video file.';
@@ -426,12 +431,13 @@ function AdminApp() {
 }
 
 function App() {
+  const reducedMotion = useReducedMotion();
   const [route, setRoute] = useState(() => routeFromHash(window.location.hash));
   useEffect(() => {
     const changed = () => setRoute(routeFromHash(window.location.hash));
     window.addEventListener('hashchange', changed);
     return () => window.removeEventListener('hashchange', changed);
   }, []);
-  return route.page === 'admin' ? <AdminApp /> : <PublicPage selected={route.id} />;
+  return <MotionConfig reducedMotion="user"><Toaster position="top-right" toastOptions={{ style: { background: '#1b1b22', color: '#f4f4f5', border: '1px solid #555563' } }} /><motion.div key={route.page} initial={reducedMotion ? false : { opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.15 }} className="min-h-screen bg-canvas font-sans text-zinc-100">{route.page === 'admin' ? <AdminApp /> : <PublicPage selected={route.id} />}</motion.div></MotionConfig>;
 }
 createRoot(document.getElementById('root')!).render(<App />);

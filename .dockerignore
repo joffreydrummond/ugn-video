@@ -13,3 +13,4 @@ coverage
 **/*.mkv
 **/*.webm
 **/*.zip
+node_modules-old*/

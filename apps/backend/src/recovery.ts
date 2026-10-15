@@ -74,9 +74,11 @@ export async function reconcileVideo(deps: RecoveryDeps, id: string, now = new D
 export async function sweepOrphanUploads(deps: RecoveryDeps, now = new Date(), idleMs = 7 * 86400000) {
   let KeyMarker: string | undefined, UploadIdMarker: string | undefined;
   do {
-    const page = await deps.s3.send(new ListMultipartUploadsCommand({ Bucket: deps.bucket, Prefix: 'originals/', KeyMarker, UploadIdMarker, MaxUploads: 100 }));
+    // This pinned MinIO instance omits active uploads when Prefix is supplied.
+    // List the bucket, then scope deletion locally to original-upload keys.
+    const page = await deps.s3.send(new ListMultipartUploadsCommand({ Bucket: deps.bucket, KeyMarker, UploadIdMarker, MaxUploads: 100 }));
     for (const upload of page.Uploads ?? []) {
-      if (!upload.Key || !upload.UploadId || !upload.Initiated || now.getTime() - upload.Initiated.getTime() <= idleMs) continue;
+      if (!upload.Key?.startsWith('originals/') || upload.Key === 'originals/' || !upload.UploadId || !upload.Initiated || now.getTime() - upload.Initiated.getTime() <= idleMs) continue;
       const id = upload.Key.slice('originals/'.length);
       await withVideoLock(deps.db, id, async db => {
         const row = await db.video.findUnique({ where: { id } });
@@ -86,6 +88,9 @@ export async function sweepOrphanUploads(deps: RecoveryDeps, now = new Date(), i
         try { await deps.s3.send(new AbortMultipartUploadCommand({ Bucket: deps.bucket, Key: upload.Key, UploadId: upload.UploadId })); }
         catch (error) { if (!missing(error)) throw error; }
       });
+    }
+    if (page.IsTruncated && (!page.NextKeyMarker || (page.NextKeyMarker === KeyMarker && page.NextUploadIdMarker === UploadIdMarker))) {
+      throw new Error('Multipart inventory pagination did not advance');
     }
     KeyMarker = page.IsTruncated ? page.NextKeyMarker : undefined;
     UploadIdMarker = page.IsTruncated ? page.NextUploadIdMarker : undefined;

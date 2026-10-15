@@ -1,11 +1,11 @@
+import { PART_SIZE, MAX_BYTES } from '../../../packages/contracts/src/index';
+export { PART_SIZE, MAX_BYTES };
 export type UploadState = 'pending' | 'uploading' | 'paused' | 'error' | 'uploaded' | 'cancelled';
 export type UploadEntry = {
   key: string; filename: string; size: number; modified: number; title: string; description: string;
   state: UploadState; serverId?: string; confirmedBytes: number; percent: number; note: string;
 };
 export const QUEUE_KEY = 'ugn:upload-queue:v1';
-export const PART_SIZE = 64 * 1024 * 1024;
-export const MAX_BYTES = 20 * 1024 ** 3;
 export function sameFile(entry: UploadEntry, file: Pick<File, 'name' | 'size' | 'lastModified'>) {
   return entry.filename === file.name && entry.size === file.size && entry.modified === file.lastModified;
 }

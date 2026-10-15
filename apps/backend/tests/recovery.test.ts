@@ -121,3 +121,32 @@ test('lock wrapper preserves cleanup state before reporting external failure', a
   }));
   assert.equal(f.row().status, 'DELETING'); assert.equal(f.counts().sqlCalls, 1);
 });
+
+test('orphan scan avoids provider prefix filtering and never aborts unrelated or recent uploads', async () => {
+  const f = fixture(); f.missingRow();
+  const aborted: string[] = [];
+  let pages = 0;
+  f.deps.s3.send = async (command: any) => {
+    if (command.constructor.name === 'AbortMultipartUploadCommand') { aborted.push(command.input.Key); return {}; }
+    assert.equal(command.input.Prefix, undefined);
+    pages++;
+    if (pages === 1) return { IsTruncated: true, NextKeyMarker: 'unrelated/key', NextUploadIdMarker: 'next', Uploads: [
+      { Key: 'other/one', UploadId: 'other', Initiated: new Date(0) },
+      { Key: 'originals/recent', UploadId: 'recent', Initiated: f.now },
+      { Key: 'originals/', UploadId: 'empty', Initiated: new Date(0) },
+    ] };
+    assert.equal(command.input.KeyMarker, 'unrelated/key');
+    assert.equal(command.input.UploadIdMarker, 'next');
+    return { IsTruncated: false, Uploads: [{ Key: 'originals/orphan', UploadId: 'old', Initiated: new Date(0) }] };
+  };
+  await sweepOrphanUploads(f.deps, f.now);
+  assert.equal(pages, 2);
+  assert.deepEqual(aborted, ['originals/orphan']);
+});
+test('orphan scan rejects truncated pages with missing or repeated cursors', async () => {
+  for (const repeat of [false, true]) {
+    const f = fixture();
+    f.deps.s3.send = async () => ({ IsTruncated: true, ...(repeat ? { NextKeyMarker: 'same', NextUploadIdMarker: 'same' } : {}) });
+    await assert.rejects(sweepOrphanUploads(f.deps, f.now), /pagination did not advance/);
+  }
+});

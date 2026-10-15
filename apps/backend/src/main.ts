@@ -1,3 +1,4 @@
+import { frontendOrigins } from '../../../packages/contracts/src/origins';
 import 'reflect-metadata';
 import { Module, Controller, Get, Post, Body, Param, Req, Res, UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
@@ -8,7 +9,7 @@ import { Queue } from 'bullmq';
 import { SignJWT, jwtVerify } from 'jose';
 import cookieParser from 'cookie-parser';
 import { timingSafeEqual } from 'node:crypto';
-import { z } from 'zod';
+import { uploadSchema, partSchema, completeSchema } from '../../../packages/contracts/src/validation';
 import type { Request, Response } from 'express';
 import { playbackMetadata, catalogMetadata } from './playback';
 import { retryVideo, deleteVideo } from './video-management';
@@ -40,10 +41,6 @@ function equal(a: string, b: string) {
   const x = Buffer.from(a), y = Buffer.from(b);
   return x.length === y.length && timingSafeEqual(x, y);
 }
-const input = z.object({
-  title: z.string().min(1).max(200), description: z.string().max(5000).default(''),
-  filename: z.string().min(1).max(255), size: z.number().int().positive().max(20 * 1024 ** 3),
-});
 @Controller()
 class Api {
   @Get('health')
@@ -89,7 +86,7 @@ class Api {
   @Post('uploads')
   async create(@Req() req: Request, @Body() body: any) {
     await admin(req);
-    const parsed = input.safeParse(body);
+    const parsed = uploadSchema.safeParse(body);
     if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
     const video = await db.video.create({ data: parsed.data });
     const upload = await s3.send(new CreateMultipartUploadCommand({ Bucket: bucket, Key: `originals/${video.id}`, ContentType: 'application/octet-stream' }));
@@ -132,7 +129,9 @@ class Api {
   async part(@Req() req: Request, @Param('id') id: string, @Body() body: any) {
     await admin(req);
     return withVideoLock(db, id, async db => {
-    const number = z.number().int().min(1).max(10000).parse(body.part);
+    const parsedPart = partSchema.safeParse(body);
+    if (!parsedPart.success) throw new BadRequestException(parsedPart.error.flatten());
+    const number = parsedPart.data.part;
     const video = await db.video.findUniqueOrThrow({ where: { id } });
     if (video.status !== 'UPLOADING') throw new BadRequestException('Upload is not active');
     await db.video.update({ where: { id }, data: { updatedAt: new Date() } });
@@ -145,7 +144,9 @@ class Api {
     return withVideoLock(db, id, async db => {
     const video = await db.video.findUniqueOrThrow({ where: { id } });
     if (video.status === 'UPLOADING') {
-      const parts = z.array(z.object({ PartNumber: z.number().int().positive(), ETag: z.string() })).min(1).parse(body.parts);
+      const parsedParts = completeSchema.safeParse(body);
+      if (!parsedParts.success) throw new BadRequestException(parsedParts.error.flatten());
+      const parts = parsedParts.data.parts;
       const uploadedSize = await originalSize(management, id);
       if (uploadedSize === null) {
         try {
@@ -182,7 +183,7 @@ class Api {
 class App {}
 const app = await NestFactory.create(App);
 app.use(cookieParser());
-app.enableCors({ origin: process.env.FRONTEND_ORIGIN || 'http://localhost:5173', credentials: true });
+app.enableCors({ origin: frontendOrigins(), credentials: true });
 await app.listen(3000, '0.0.0.0');
 
 const idleDays = Number(process.env.UPLOAD_IDLE_DAYS || 7);

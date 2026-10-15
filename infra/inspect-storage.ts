@@ -25,23 +25,24 @@ try {
     const result = await inspectSession(deps, saved.snapshot.id, saved.snapshot);
     console.log(JSON.stringify(result, null, 2));
     if (!result.deletionVerified) process.exitCode = 2;
-  } else if (!mode) {
+  } else if (!mode || mode === 'inventory-all') {
     let KeyMarker: string | undefined, UploadIdMarker: string | undefined;
     let listed = 0;
     do {
       const page = await s3.send(new ListMultipartUploadsCommand({
-        Bucket: bucket, Prefix: 'originals/', KeyMarker, UploadIdMarker,
+        Bucket: bucket, KeyMarker, UploadIdMarker,
       }));
-      listed += page.Uploads?.length ?? 0;
-      console.log(JSON.stringify({ source: 'multipart inventory', uploads: page.Uploads ?? [] }, null, 2));
+      const uploads = (page.Uploads ?? []).filter(upload => mode === 'inventory-all' || upload.Key?.startsWith('originals/'));
+      listed += uploads.length;
+      console.log(JSON.stringify({ source: 'multipart inventory', prefix: null, localKeyFilter: mode === 'inventory-all' ? null : 'originals/', uploads }, null, 2));
+      if (page.IsTruncated && (!page.NextKeyMarker || (page.NextKeyMarker === KeyMarker && page.NextUploadIdMarker === UploadIdMarker))) throw new Error('Multipart inventory pagination did not advance');
       KeyMarker = page.IsTruncated ? page.NextKeyMarker : undefined;
       UploadIdMarker = page.IsTruncated ? page.NextUploadIdMarker : undefined;
-      if (page.IsTruncated && !KeyMarker) throw new Error('Truncated inventory returned no key marker');
     } while (KeyMarker);
     const rows = await db.video.findMany({ where: { status: { in: ['UPLOADING', 'DELETING'] } }, select: { id: true } });
     for (const row of rows) console.log(JSON.stringify(await inspectSession(deps, row.id), null, 2));
     if (listed === 0) console.error('Empty inventory is NOT proof of cleanup. Use snapshot/verify for a specific session; tracked uploads are checked directly above.');
-  } else throw new Error('Supported modes: snapshot SESSION_ID, verify (JSON on stdin), or no arguments');
+  } else throw new Error('Supported modes: snapshot SESSION_ID, verify (JSON on stdin), inventory-all, or no arguments');
 } catch (error: any) {
   console.error(error?.name ?? 'Error', error?.message ?? String(error));
   process.exitCode = 1;

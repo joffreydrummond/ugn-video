@@ -42,8 +42,8 @@ function run(bin: string, args: string[], onSeconds?: (seconds: number) => void)
 
 const worker = new Worker('videos', async job => {
   const { id } = job.data;
-  const video = await db.video.findUniqueOrThrow({ where: { id } });
-  if (video.status === 'READY') return;
+  const video = await db.video.findUnique({ where: { id } });
+  if (!video || !['UPLOADED', 'PROCESSING', 'RETRYING'].includes(video.status)) return;
   const directory = await mkdtemp('/tmp/ugn-');
   let pendingUpdate: Promise<void> = Promise.resolve();
   let lastWrite = 0;
@@ -63,16 +63,17 @@ const worker = new Worker('videos', async job => {
         ? new Date(now + Math.max(1, secondsLeft) * 1000) : null,
     };
     pendingUpdate = pendingUpdate.then(async () => {
-      await db.video.update({ where: { id }, data });
+      await db.video.updateMany({ where: { id, status: 'PROCESSING' }, data });
     }).catch(error => console.error(`[${id}] Progress update failed:`, error));
   }
 
   try {
-    await db.video.update({ where: { id }, data: {
+    const claimed = await db.video.updateMany({ where: { id, status: { in: ['UPLOADED', 'PROCESSING', 'RETRYING'] } }, data: {
       status: 'PROCESSING', progress: 0, error: null,
       processingStage: 'Downloading original video', estimatedCompletionAt: null,
       processingHeartbeatAt: new Date(),
     } });
+    if (!claimed.count) return;
     console.log(`[${id}] Downloading original video`);
     const source = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: `originals/${id}` }));
     if (!source.Body) throw new Error('The original video has no readable body.');
@@ -158,15 +159,16 @@ const worker = new Worker('videos', async job => {
     await s3.send(new PutObjectCommand({ Bucket: bucket, Key: `videos/${id}/master.m3u8`, Body: master,
       ContentType: 'application/vnd.apple.mpegurl', CacheControl: 'no-cache' }));
     await pendingUpdate;
-    await db.video.update({ where: { id }, data: {
+    await db.video.updateMany({ where: { id, status: 'PROCESSING' }, data: {
       status: 'READY', progress: 100, duration, error: null,
       processingStage: null, estimatedCompletionAt: null, processingHeartbeatAt: new Date(),
     } });
     console.log(`[${id}] Ready`);
   } catch (error) {
     await pendingUpdate;
-    await db.video.update({ where: { id }, data: {
-      status: 'FAILED', error: String(error).slice(-2000), processingStage: null,
+    const willRetry = job.attemptsMade + 1 < (job.opts.attempts ?? 1);
+    await db.video.updateMany({ where: { id, status: 'PROCESSING' }, data: {
+      status: willRetry ? 'RETRYING' : 'FAILED', error: String(error).slice(-2000), processingStage: null,
       estimatedCompletionAt: null, processingHeartbeatAt: new Date(),
     } });
     throw error;

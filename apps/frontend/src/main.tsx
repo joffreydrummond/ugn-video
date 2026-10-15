@@ -31,6 +31,26 @@ async function api(path: string, body?: unknown) {
   return data;
 }
 
+function readableProcessingError(error: unknown) {
+  const detail = String(error || '');
+  if (/invalid data found|moov atom not found|no video stream|invalid media duration|no readable body/i.test(detail)) {
+    return 'This file could not be read as a video. Try uploading a valid video file.';
+  }
+  return 'Processing could not finish. Try processing again. If it keeps failing, try uploading a different video file.';
+}
+
+function processingNotice(video: any) {
+  const name = '“' + video.title + '”';
+  switch (video.status) {
+    case 'READY': return name + ' is ready to watch.';
+    case 'FAILED': return name + ': ' + readableProcessingError(video.error);
+    case 'RETRYING': return name + ' will retry automatically. Your original upload is saved.';
+    case 'PROCESSING': return name + ' is processing. Follow its progress in Sessions below.';
+    case 'DELETING': return name + ' is being deleted.';
+    default: return name + ': Upload received. Queued for processing.';
+  }
+}
+
 function processingEstimate(video: any) {
   if (!video.processingHeartbeatAt) return 'Calculating time remaining…';
   const age = Date.now() - new Date(video.processingHeartbeatAt).getTime();
@@ -197,13 +217,23 @@ function App() {
   const [videos, setVideos] = useState<any[]>([]);
   const [file, setFile] = useState<File>();
   const [title, setTitle] = useState('');
-  const [message, setMessage] = useState('');
+  const [message, setMessageText] = useState('');
+  const [noticeVideo, setNoticeVideo] = useState<{ id: string; title: string; status: string } | null>(null);
+  function setMessage(value: string) {
+    setNoticeVideo(null);
+    setMessageText(value);
+  }
+  const displayedMessage = noticeVideo
+    ? processingNotice(videos.find(video => video.id === noticeVideo.id) || noticeVideo)
+    : message;
   const [percent, setPercent] = useState(0);
   const [selected, setSelected] = useState('');
   const [uploading, setUploading] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
   const [savedUpload, setSavedUpload] = useState<any>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const [sessionAction, setSessionAction] = useState<{ id: string; kind: 'retry' | 'delete' } | null>(null);
+  const actionBusy = useRef(false);
 
   function readSavedUpload() {
     try {
@@ -453,7 +483,8 @@ function App() {
 
       localStorage.removeItem('upload');
       resetUploadForm();
-      setMessage(`“${video.title || file.name}” uploaded successfully. Follow its processing progress in Sessions below. You can upload another video now.`);
+      setMessage('');
+      setNoticeVideo({ id: video.id, title: video.title || file.name, status: 'UPLOADED' });
     } catch (error) {
       handleError(error);
     } finally {
@@ -488,6 +519,37 @@ function App() {
       setMessage('Upload cancelled.');
     } catch (error) {
       handleError(error);
+    }
+  }
+
+  async function manageSession(video: any, kind: 'retry' | 'delete') {
+    if (actionBusy.current) return;
+    if (kind === 'delete' && !window.confirm(
+      `Delete “${video.title}”? This permanently removes the original video, playback files, and session record.`,
+    )) return;
+    actionBusy.current = true;
+    setSessionAction({ id: video.id, kind });
+    setMessage(kind === 'delete' ? 'Deleting session and stored files…' : 'Queuing processing…');
+    if (kind === 'delete' && selected === video.id) setSelected('');
+    try {
+      await api(`admin/videos/${video.id}/${kind}`, {});
+      if (kind === 'delete') {
+        setVideos(previous => previous.filter(item => item.id !== video.id));
+        try { localStorage.removeItem(`watch:${video.id}`); } catch { /* Optional per-device playback history. */ }
+        setMessage(`“${video.title}” deleted.`);
+      } else {
+        setVideos(previous => previous.map(item => item.id === video.id
+          ? { ...item, status: 'UPLOADED', progress: 0, error: null, estimatedCompletionAt: null, processingStage: null }
+          : item));
+        setMessage('');
+        setNoticeVideo({ id: video.id, title: video.title, status: 'UPLOADED' });
+      }
+      try { setVideos(await api('admin/videos')); } catch (error) { handleError(error); }
+    } catch (error) {
+      handleError(error);
+    } finally {
+      actionBusy.current = false;
+      setSessionAction(null);
     }
   }
 
@@ -568,7 +630,7 @@ function App() {
         </form>
       )}
 
-      {message && <p role="status">{message}</p>}
+      {displayedMessage && <p role="status">{displayedMessage}</p>}
 
       {auth === 'signed-in' && (
         <>
@@ -691,12 +753,14 @@ function App() {
                   {video.status === 'UPLOADED' && (
                     <p>Queued for processing. Waiting for an available worker…</p>
                   )}
+                  {video.status === 'RETRYING' && <p>Processing will retry automatically. Your original upload is saved.</p>}
+                  {video.status === 'DELETING' && <p>Deletion is unfinished. Try deleting again to complete cleanup.</p>}
                   {video.status === 'UPLOADING' && (
                     <p>Waiting for the upload to finish.</p>
                   )}
-                  {video.error && (
+                  {video.error && video.status === 'FAILED' && (
                     <p className="error-message" role="alert">
-                      {video.error}
+                      {readableProcessingError(video.error)}
                     </p>
                   )}
                   {video.status === 'READY' && (
@@ -706,6 +770,20 @@ function App() {
                         Watch session
                       </button>
                     </>
+                  )}
+                  {['READY', 'FAILED', 'DELETING'].includes(video.status) && (
+                    <div className="actions" style={{ marginTop: 16 }}>
+                      {video.status === 'FAILED' && (
+                        <button type="button" disabled={!!sessionAction} onClick={() => void manageSession(video, 'retry')}>
+                          {sessionAction?.id === video.id && sessionAction?.kind === 'retry' ? 'Queuing…' : 'Retry processing'}
+                        </button>
+                      )}
+                      <button type="button" className="secondary" disabled={!!sessionAction}
+                        onClick={() => void manageSession(video, 'delete')}>
+                        {sessionAction?.id === video.id && sessionAction?.kind === 'delete'
+                          ? 'Deleting…' : video.status === 'DELETING' ? 'Try delete again' : 'Delete session'}
+                      </button>
+                    </div>
                   )}
                 </article>
               );
